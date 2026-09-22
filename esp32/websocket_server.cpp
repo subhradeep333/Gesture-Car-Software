@@ -90,7 +90,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void setupWebSocketServer() {
     webSocket.begin();
     webSocket.onEvent(webSocketEvent);
-    Serial.printf("[+] WebSocket Server Started on port %d\n", WEBSOCKET_PORT);
+    
+    // Enable active WebSocket heartbeat (Ping every 1.5s, 1.0s timeout, 2 fails -> reset)
+    webSocket.enableHeartbeat(1500, 1000, 2);
+
+    Serial.printf("[+] WebSocket Server Started on port %d with active Heartbeat\n", WEBSOCKET_PORT);
 }
 
 void loopWebSocketServer() {

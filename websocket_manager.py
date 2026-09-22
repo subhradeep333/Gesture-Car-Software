@@ -51,8 +51,8 @@ class WebSocketManager(QObject):
                 # Connect with compression disabled for ultra-low latency & CPU saving
                 async with websockets.connect(
                     self.ws_url, 
-                    ping_interval=5, 
-                    ping_timeout=3,
+                    ping_interval=1.5, 
+                    ping_timeout=1.0,
                     compression=None
                 ) as ws:
                     self.is_connected = True
@@ -76,7 +76,7 @@ class WebSocketManager(QObject):
                 self.log_emitted.emit("WS_ERROR", f"Connection error: {str(e)}")
 
             if self.is_running:
-                await asyncio.sleep(2.0)  # Reconnect delay
+                await asyncio.sleep(0.5)  # Fast reconnect retry (0.5s) for instant link recovery
 
     async def _tx_producer(self, ws):
         """Async task pulling JSON packets from asyncio.Queue instantly with 0ms delay."""
