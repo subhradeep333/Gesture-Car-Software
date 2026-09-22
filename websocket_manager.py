@@ -1,12 +1,12 @@
 """
 Asynchronous WebSocket Manager for ESP32 Wi-Fi Communication with Qt Signal bindings.
+Optimized with asyncio.Queue and zero-delay WebSocket dispatches.
 """
 
 import time
 import json
 import asyncio
 import threading
-import queue
 import websockets
 from PySide6.QtCore import QObject, Signal
 import config
@@ -23,11 +23,10 @@ class WebSocketManager(QObject):
         self.is_connected = False
         self.sequence_num = 0
         
-        self.tx_queue = queue.Queue(maxsize=10)
         self.is_running = False
         self.thread = None
         self.loop = None
-        self.ws_client = None
+        self.async_queue = None
 
     def start(self):
         """Starts background asyncio loop thread."""
@@ -41,6 +40,7 @@ class WebSocketManager(QObject):
         """Asyncio event loop running inside background thread."""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        self.async_queue = asyncio.Queue(maxsize=10)
         self.loop.run_until_complete(self._websocket_client_task())
 
     async def _websocket_client_task(self):
@@ -48,13 +48,18 @@ class WebSocketManager(QObject):
         while self.is_running:
             try:
                 self.log_emitted.emit("WS", f"Connecting to {self.ws_url}...")
-                async with websockets.connect(self.ws_url, ping_interval=5, ping_timeout=3) as ws:
-                    self.ws_client = ws
+                # Connect with compression disabled for ultra-low latency & CPU saving
+                async with websockets.connect(
+                    self.ws_url, 
+                    ping_interval=5, 
+                    ping_timeout=3,
+                    compression=None
+                ) as ws:
                     self.is_connected = True
                     self.connection_status_changed.emit(True, f"Connected to {self.ws_url}")
                     self.log_emitted.emit("WS", "WebSocket connection established!")
 
-                    # Run TX and RX concurrently
+                    # Run TX and RX tasks concurrently
                     tx_task = asyncio.create_task(self._tx_producer(ws))
                     rx_task = asyncio.create_task(self._rx_consumer(ws))
 
@@ -67,7 +72,6 @@ class WebSocketManager(QObject):
 
             except Exception as e:
                 self.is_connected = False
-                self.ws_client = None
                 self.connection_status_changed.emit(False, f"Disconnected: {str(e)}")
                 self.log_emitted.emit("WS_ERROR", f"Connection error: {str(e)}")
 
@@ -75,26 +79,17 @@ class WebSocketManager(QObject):
                 await asyncio.sleep(2.0)  # Reconnect delay
 
     async def _tx_producer(self, ws):
-        """Async task sending JSON packets from queue to WebSocket."""
+        """Async task pulling JSON packets from asyncio.Queue instantly with 0ms delay."""
         while self.is_running and self.is_connected:
             try:
-                # Poll queue non-blockingly via loop.run_in_executor
-                packet = await self.loop.run_in_executor(None, self._pop_tx_queue)
-                if packet:
-                    payload = json.dumps(packet)
-                    await ws.send(payload)
-                    self.log_emitted.emit("TX", payload)
-                else:
-                    await asyncio.sleep(0.01)
+                packet = await self.async_queue.get()
+                payload = json.dumps(packet)
+                await ws.send(payload)
+                self.log_emitted.emit("TX", payload)
+                self.async_queue.task_done()
             except Exception as e:
                 self.log_emitted.emit("TX_ERROR", f"Send failed: {str(e)}")
                 break
-
-    def _pop_tx_queue(self):
-        try:
-            return self.tx_queue.get(timeout=0.05)
-        except queue.Empty:
-            return None
 
     async def _rx_consumer(self, ws):
         """Async task receiving telemetry JSON messages from ESP32."""
@@ -109,8 +104,8 @@ class WebSocketManager(QObject):
                 self.log_emitted.emit("RX_ERROR", f"Receive error: {str(e)}")
 
     def send_command(self, cmd_char, speed=config.DEFAULT_MOTOR_SPEED):
-        """Queues a command packet to send to ESP32."""
-        if not self.is_connected:
+        """Queues a command packet to send to ESP32 instantly via thread-safe call."""
+        if not self.is_connected or not self.loop or not self.async_queue:
             return False
 
         self.sequence_num += 1
@@ -121,18 +116,20 @@ class WebSocketManager(QObject):
             "timestamp": int(time.time() * 1000)
         }
 
-        # Clear old items if queue is full
-        if self.tx_queue.full():
-            try:
-                self.tx_queue.get_nowait()
-            except queue.Empty:
-                pass
+        # Dispatch item into asyncio.Queue safely from PySide6 GUI thread
+        self.loop.call_soon_threadsafe(self._enqueue_packet_safe, packet)
+        return True
 
+    def _enqueue_packet_safe(self, packet):
+        if self.async_queue.full():
+            try:
+                self.async_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
         try:
-            self.tx_queue.put_nowait(packet)
-            return True
-        except queue.Full:
-            return False
+            self.async_queue.put_nowait(packet)
+        except asyncio.QueueFull:
+            pass
 
     def stop(self):
         """Stops WebSocket manager and closes connection cleanly."""

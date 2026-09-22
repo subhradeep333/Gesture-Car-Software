@@ -324,18 +324,32 @@ class MainWindow(QMainWindow):
                 config.CMD_STOP, True, False, False, 0.0, min_conf
             )
 
-        # 7. Update Status Badges
-        g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
-        self.lbl_gesture_val.setText(f"{g_meta[1]} {g_meta[0]}")
-        self.lbl_gesture_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {g_meta[2]};")
+        # 7. Update Status Badges (Skip redundant repaints if unchanged)
+        if not hasattr(self, '_last_ui_state'):
+            self._last_ui_state = {}
 
-        c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
-        self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
-        self.lbl_command_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {c_meta[2]};")
+        if self._last_ui_state.get('gesture') != candidate_gesture:
+            self._last_ui_state['gesture'] = candidate_gesture
+            g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
+            self.lbl_gesture_val.setText(f"{g_meta[1]} {g_meta[0]}")
+            self.lbl_gesture_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {g_meta[2]};")
+
+        if self._last_ui_state.get('command') != active_car_cmd:
+            self._last_ui_state['command'] = active_car_cmd
+            c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
+            self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
+            self.lbl_command_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {c_meta[2]};")
 
         conf_pct = confidence * 100.0 if detected else 0.0
-        self.lbl_conf_val.setText(f"{conf_pct:.1f}%")
-        self.lbl_fps_val.setText(f"{fps:.1f} FPS")
+        conf_str = f"{conf_pct:.1f}%"
+        if self._last_ui_state.get('conf') != conf_str:
+            self._last_ui_state['conf'] = conf_str
+            self.lbl_conf_val.setText(conf_str)
+
+        fps_str = f"{fps:.1f} FPS"
+        if self._last_ui_state.get('fps') != fps_str:
+            self._last_ui_state['fps'] = fps_str
+            self.lbl_fps_val.setText(fps_str)
 
     def closeEvent(self, event):
         """Clean application exit handler."""
