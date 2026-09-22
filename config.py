@@ -17,9 +17,9 @@ TARGET_FPS = 30
 
 # MediaPipe Hand Tracking Settings
 MAX_NUM_HANDS = 1
-MODEL_COMPLEXITY = 0  # 0 for light/fast processing
-DEFAULT_MIN_DETECTION_CONFIDENCE = 0.70
-DEFAULT_MIN_TRACKING_CONFIDENCE = 0.70
+MODEL_COMPLEXITY = 1  # 1 for full complexity (higher precision landmark tracking)
+DEFAULT_MIN_DETECTION_CONFIDENCE = 0.60
+DEFAULT_MIN_TRACKING_CONFIDENCE = 0.60
 
 # Temporal Gesture Smoothing Hysteresis
 DEFAULT_STABILITY_FRAME_THRESHOLD = 5

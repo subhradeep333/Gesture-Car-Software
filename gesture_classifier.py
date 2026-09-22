@@ -83,13 +83,13 @@ class GestureClassifier:
             abs_dx = abs(dx)
             abs_dy = abs(dy)
 
-            # Determine dominant direction
-            if abs_dy > abs_dx * 0.8:
+            # Determine dominant direction smoothly even for tilted/angled hand positions
+            if abs_dy >= abs_dx:
                 if dy < 0:
                     return config.CMD_FORWARD      # ☝️ Pointing UP
                 else:
                     return config.CMD_BACKWARD     # 👇 Pointing DOWN
-            elif abs_dx > abs_dy * 0.8:
+            else:
                 if dx < 0:
                     return config.CMD_LEFT         # 👈 Pointing LEFT (Image space)
                 else:

@@ -92,7 +92,7 @@ class CameraStream:
         with self.lock:
             if not self.ret or self.frame is None:
                 return False, None, self.fps
-            return True, self.frame, self.fps  # Direct frame reference for zero-copy speed
+            return True, self.frame.copy(), self.fps  # Return thread-safe copy to prevent graphics mutation corruption
 
     def stop(self):
         self.is_running = False

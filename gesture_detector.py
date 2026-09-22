@@ -24,6 +24,11 @@ class HandDetector:
         self.use_tasks_api = False
         self.landmarker = None
         self.hands = None
+        
+        # EMA landmark smoothing state
+        self.prev_landmarks = None
+        self.smooth_alpha = 0.75  # Weight for current frame (0.75 = crisp + smooth)
+        self.last_timestamp_ms = 0
 
         # Check if legacy mp.solutions exists
         if hasattr(mp, "solutions") and hasattr(mp.solutions, "hands"):
@@ -47,6 +52,7 @@ class HandDetector:
             base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
             options = vision.HandLandmarkerOptions(
                 base_options=base_options,
+                running_mode=vision.RunningMode.VIDEO,
                 num_hands=max_hands,
                 min_hand_detection_confidence=min_detection_confidence,
                 min_hand_presence_confidence=min_tracking_confidence,
@@ -64,10 +70,27 @@ class HandDetector:
             except Exception as e:
                 print(f"[!] Failed to download model automatically: {e}")
 
+    def _smooth_landmarks(self, current_landmarks):
+        """Applies Exponential Moving Average (EMA) to 21 3D landmarks for noise reduction."""
+        if self.prev_landmarks is None or len(self.prev_landmarks) != len(current_landmarks):
+            self.prev_landmarks = current_landmarks
+            return current_landmarks
+
+        smoothed = []
+        for (cx, cy, cz), (px, py, pz) in zip(current_landmarks, self.prev_landmarks):
+            sx = self.smooth_alpha * cx + (1.0 - self.smooth_alpha) * px
+            sy = self.smooth_alpha * cy + (1.0 - self.smooth_alpha) * py
+            sz = self.smooth_alpha * cz + (1.0 - self.smooth_alpha) * pz
+            smoothed.append((sx, sy, sz))
+
+        self.prev_landmarks = smoothed
+        return smoothed
+
     def set_confidence_thresholds(self, min_detection_confidence, min_tracking_confidence):
         """Re-initializes hands processor with updated confidence settings."""
         self.min_detection_confidence = min_detection_confidence
         self.min_tracking_confidence = min_tracking_confidence
+        self.prev_landmarks = None
 
         if not self.use_tasks_api and self.hands:
             self.hands.close()
@@ -87,6 +110,7 @@ class HandDetector:
             base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
             options = vision.HandLandmarkerOptions(
                 base_options=base_options,
+                running_mode=vision.RunningMode.VIDEO,
                 num_hands=self.max_hands,
                 min_hand_detection_confidence=min_detection_confidence,
                 min_hand_presence_confidence=min_tracking_confidence,
@@ -104,6 +128,7 @@ class HandDetector:
             confidence (float): Hand landmark score.
             hand_type (str): 'Right' or 'Left'.
         """
+        import time
         h, w, _ = frame.shape
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -111,10 +136,16 @@ class HandDetector:
         pixel_landmarks = []
 
         if self.use_tasks_api:
+            now_ms = int(time.time() * 1000)
+            if now_ms <= self.last_timestamp_ms:
+                now_ms = self.last_timestamp_ms + 1
+            self.last_timestamp_ms = now_ms
+
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            results = self.landmarker.detect(mp_image)
+            results = self.landmarker.detect_for_video(mp_image, now_ms)
 
             if not results.hand_landmarks:
+                self.prev_landmarks = None
                 return False, [], [], 0.0, "Unknown"
 
             hand_landmarks = results.hand_landmarks[0]
@@ -125,15 +156,16 @@ class HandDetector:
                 confidence = results.handedness[0][0].score
                 hand_type = results.handedness[0][0].category_name
 
-            for lm in hand_landmarks:
-                landmarks_list.append((lm.x, lm.y, lm.z))
-                pixel_landmarks.append((int(lm.x * w), int(lm.y * h)))
+            raw_lms = [(lm.x, lm.y, lm.z) for lm in hand_landmarks]
+            landmarks_list = self._smooth_landmarks(raw_lms)
+            pixel_landmarks = [(int(lm[0] * w), int(lm[1] * h)) for lm in landmarks_list]
 
             return True, landmarks_list, pixel_landmarks, confidence, hand_type
         else:
             results = self.hands.process(rgb_frame)
 
             if not results.multi_hand_landmarks:
+                self.prev_landmarks = None
                 return False, [], [], 0.0, "Unknown"
 
             hand_landmarks = results.multi_hand_landmarks[0]
@@ -142,9 +174,9 @@ class HandDetector:
             confidence = hand_meta.score
             hand_type = hand_meta.label
 
-            for lm in hand_landmarks.landmark:
-                landmarks_list.append((lm.x, lm.y, lm.z))
-                pixel_landmarks.append((int(lm.x * w), int(lm.y * h)))
+            raw_lms = [(lm.x, lm.y, lm.z) for lm in hand_landmarks.landmark]
+            landmarks_list = self._smooth_landmarks(raw_lms)
+            pixel_landmarks = [(int(lm[0] * w), int(lm[1] * h)) for lm in landmarks_list]
 
             return True, landmarks_list, pixel_landmarks, confidence, hand_type
 
