@@ -11,8 +11,8 @@
 // Wi-Fi Access Point Credentials & RF Parameters
 #define WIFI_SSID "GestureCar"
 #define WIFI_PASS "12345678"
-#define WIFI_CHANNEL 1       # Dedicated 2.4GHz Wi-Fi Channel 1 (Low Interference)
-#define MAX_AP_CLIENTS 1     # Reject external probing devices to dedicate 100% bandwidth to Laptop
+#define WIFI_CHANNEL 1       // Dedicated 2.4GHz Wi-Fi Channel 1 (Low Interference)
+#define MAX_AP_CLIENTS 1     // Reject external probing devices to dedicate 100% bandwidth to Laptop
 
 // Network IP Parameters
 #define AP_IP_1 192
