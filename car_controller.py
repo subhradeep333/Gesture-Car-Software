@@ -1,97 +1,61 @@
 """
-Car Controller managing fail-safe behavior, command deduplication, and heartbeat keep-alive.
+Car Controller orchestrating Safety Evaluation, Command Deduplication, and WebSocket Transmission.
 """
 
 import time
 import config
 
 class CarController:
-    def __init__(self, serial_manager):
-        self.serial_manager = serial_manager
-        
-        self.is_active = False           # True when user clicks Start System
-        self.emergency_override = False  # True when GUI Emergency STOP is pressed
+    def __init__(self, safety_manager, websocket_manager):
+        self.safety_manager = safety_manager
+        self.websocket_manager = websocket_manager
         
         self.active_command = config.CMD_STOP
         self.last_sent_command = None
+        self.last_sent_speed = None
         self.last_send_time = 0.0
-        self.heartbeat_interval = config.HEARTBEAT_INTERVAL
+        
+        self.heartbeat_interval = config.HEARTBEAT_INTERVAL_SEC
         self.motor_speed = config.DEFAULT_MOTOR_SPEED
-
-    def start(self):
-        """Starts car controller execution."""
-        self.is_active = True
-        self.emergency_override = False
-        self.active_command = config.CMD_STOP
-        self.send_immediate_command(config.CMD_STOP)
-
-    def stop(self):
-        """Stops car controller execution and sends STOP to car."""
-        self.is_active = False
-        self.active_command = config.CMD_STOP
-        self.send_immediate_command(config.CMD_STOP)
-
-    def trigger_emergency_stop(self):
-        """Triggers emergency stop state."""
-        self.emergency_override = True
-        self.active_command = config.CMD_EMERGENCY_STOP
-        self.send_immediate_command(config.CMD_EMERGENCY_STOP)
-
-    def clear_emergency_stop(self):
-        """Clears emergency stop override state."""
-        self.emergency_override = False
-        self.active_command = config.CMD_STOP
-        self.send_immediate_command(config.CMD_STOP)
 
     def set_motor_speed(self, speed):
         """Sets target motor PWM speed (100 to 255)."""
         self.motor_speed = max(config.MIN_MOTOR_SPEED, min(config.MAX_MOTOR_SPEED, int(speed)))
 
-    def update_gesture_command(self, gesture_cmd, is_stable, detected, camera_ok):
+    def update(self, gesture_cmd, is_stable, hand_detected, camera_ok, confidence, min_conf):
         """
-        Evaluates current gesture command against safety fail-safes and dispatches to serial.
-        Returns target_cmd (str).
+        Evaluates safety rules, checks deduplication, and sends command to ESP32 over WebSocket.
+        Returns (active_command, safety_ok, fault_reason).
         """
         now = time.time()
+        ws_connected = self.websocket_manager.is_connected if self.websocket_manager else False
 
-        # Fail-Safe Rules Evaluation Order:
-        # 1. Emergency GUI Override -> EMERGENCY_STOP
-        if self.emergency_override:
-            target_cmd = config.CMD_EMERGENCY_STOP
-        # 2. System inactive -> STOP
-        elif not self.is_active:
-            target_cmd = config.CMD_STOP
-        # 3. Camera stream disconnected or failed -> STOP
-        elif not camera_ok:
-            target_cmd = config.CMD_STOP
-        # 4. No hand detected -> STOP
-        elif not detected:
-            target_cmd = config.CMD_STOP
-        # 5. Gesture is Emergency Fist -> EMERGENCY_STOP
-        elif gesture_cmd == config.CMD_EMERGENCY_STOP:
-            target_cmd = config.CMD_EMERGENCY_STOP
-        # 6. Gesture valid and stable -> gesture_cmd
-        elif is_stable and gesture_cmd in [config.CMD_FORWARD, config.CMD_BACKWARD, config.CMD_LEFT, config.CMD_RIGHT, config.CMD_STOP]:
-            target_cmd = gesture_cmd
-        else:
-            target_cmd = config.CMD_STOP
+        # Evaluate safety rules
+        target_cmd, safety_ok, fault_reason = self.safety_manager.evaluate_safety(
+            gesture_cmd, is_stable, hand_detected, camera_ok, ws_connected, confidence, min_conf
+        )
 
         self.active_command = target_cmd
 
         # Deduplication & Heartbeat transmission logic:
-        # Send if command changed OR if heartbeat interval elapsed
-        if (target_cmd != self.last_sent_command) or ((now - self.last_send_time) >= self.heartbeat_interval):
-            if self.serial_manager and self.serial_manager.is_connected:
-                self.serial_manager.send_command(target_cmd)
+        # Send if command or speed changed OR if heartbeat interval elapsed
+        cmd_changed = (target_cmd != self.last_sent_command)
+        speed_changed = (self.motor_speed != self.last_sent_speed)
+        heartbeat_due = ((now - self.last_send_time) >= self.heartbeat_interval)
+
+        if (cmd_changed or speed_changed or heartbeat_due):
+            if self.websocket_manager and ws_connected:
+                self.websocket_manager.send_command(target_cmd, self.motor_speed)
                 self.last_sent_command = target_cmd
+                self.last_sent_speed = self.motor_speed
                 self.last_send_time = now
 
-        return target_cmd
+        return target_cmd, safety_ok, fault_reason
 
-    def send_immediate_command(self, cmd_char):
-        """Sends immediate unbuffered command over serial."""
-        self.active_command = cmd_char
-        self.last_sent_command = cmd_char
+    def send_immediate_stop(self):
+        """Sends an immediate STOP packet over WebSocket."""
+        self.active_command = config.CMD_STOP
+        self.last_sent_command = config.CMD_STOP
         self.last_send_time = time.time()
-        if self.serial_manager and self.serial_manager.is_connected:
-            self.serial_manager.send_command(cmd_char)
+        if self.websocket_manager and self.websocket_manager.is_connected:
+            self.websocket_manager.send_command(config.CMD_STOP, self.motor_speed)

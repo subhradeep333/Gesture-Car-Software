@@ -1,59 +1,54 @@
 """
-Main Entry Point for Real-time AI Hand Gesture Controlled IoT Car.
+Main Entry Point for ESP32 AI Hand Gesture Controlled IoT Car (PySide6 Edition).
 """
 
 import sys
-import tkinter as tk
+from PySide6.QtWidgets import QApplication
 from camera import CameraStream
 from gesture_detector import HandDetector
 from gesture_classifier import GestureClassifier
-from serial_manager import SerialManager
+from safety import SafetyManager
+from websocket_manager import WebSocketManager
 from car_controller import CarController
-from ui import CarControlUI
+from ui import MainWindow
 
 def main():
     print("==========================================================")
-    print(" Real-Time AI Hand Gesture Controlled IoT Car System")
+    print(" ESP32 AI Hand Gesture Controlled IoT Car System (PySide6)")
     print("==========================================================")
-    
-    # 1. Instantiate Core Subsystems
+
+    # 1. Initialize PySide6 Application
+    app = QApplication(sys.argv)
+
+    # 2. Instantiate Core Subsystems
     camera_stream = CameraStream()
     hand_detector = HandDetector()
     gesture_classifier = GestureClassifier()
-    serial_manager = SerialManager()
-    car_controller = CarController(serial_manager)
+    safety_manager = SafetyManager()
+    websocket_manager = WebSocketManager()
+    car_controller = CarController(safety_manager, websocket_manager)
 
-    # 2. Start Camera Stream
+    # 3. Start Background Threads
     print("[+] Initializing camera stream...")
     if not camera_stream.start():
-        print("[!] Error: Unable to open camera. Please check camera connection and macOS privacy permissions.")
-        # Proceed so GUI opens and allows user troubleshooting/serial connection even without video
-    else:
-        print("[+] Camera stream initialized successfully.")
+        print("[!] Warning: Unable to open camera. Check permissions/connections.")
 
-    # 3. Create Tkinter GUI Root
-    root = tk.Tk()
-    app = CarControlUI(
-        root=root,
+    print("[+] Starting WebSocket Manager...")
+    websocket_manager.start()
+
+    # 4. Launch PySide6 GUI MainWindow
+    window = MainWindow(
         camera_stream=camera_stream,
         hand_detector=hand_detector,
         gesture_classifier=gesture_classifier,
+        safety_manager=safety_manager,
         car_controller=car_controller,
-        serial_manager=serial_manager
+        websocket_manager=websocket_manager
     )
+    window.show()
 
-    # 4. Start Event Loop
-    try:
-        root.mainloop()
-    except KeyboardInterrupt:
-        print("\n[!] KeyboardInterrupt received. Shutting down system...")
-    finally:
-        print("[+] Stopping system modules...")
-        car_controller.stop()
-        serial_manager.disconnect()
-        camera_stream.stop()
-        hand_detector.close()
-        print("[+] System shutdown complete.")
+    # 5. Run Application Event Loop
+    sys.exit(app.exec())
 
 if __name__ == '__main__':
     main()

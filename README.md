@@ -1,218 +1,159 @@
-# Real-Time AI Hand Gesture Controlled IoT Car
+# Real-Time AI Hand Gesture Controlled IoT Car (ESP32 Wi-Fi & PySide6 Edition)
 
-An end-to-end, lightweight, real-time AI hand gesture-controlled IoT car software built with Python 3, OpenCV, MediaPipe, PySerial, and Arduino C++ with nRF24L01 wireless transceivers.
+An end-to-end, ultra-low latency, real-time AI hand gesture-controlled IoT car software built with Python 3, PySide6 (Qt6), OpenCV, MediaPipe, WebSockets, and modular ESP32 C++ firmware.
 
 ---
 
-## 📐 System Architecture & Data Flow
+## 📐 System Architecture & Wireless Data Flow
 
-```
-+------------------+         +------------------+         +------------------------+
-|  Laptop Camera   | ------> |  MediaPipe Hands | ------> | Gesture Classifier     |
-| (AVFoundation)   |  RGB    |  21 3D Landmarks |         | & Temporal Hysteresis  |
-+------------------+         +------------------+         +------------------------+
-                                                                      |
-                                                            Command (F,B,L,R,S,E)
-                                                                      v
-+------------------+         +------------------+         +------------------------+
-| USB Serial Port  | <------ | Fail-Safe Engine | <------ | Safety Rules Check     |
-| (115200 Baud)    |  ASCII  | & Heartbeat      |         | (No Hand / Low Conf)   |
-+------------------+         +------------------+         +------------------------+
-         |
-         | USB Cable
-         v
-+------------------------+
-| Arduino Nano #1        |
-| (Transmitter)          |
-+------------------------+
-         |
-         | nRF24L01 2.4GHz RF Link ("CAR01")
-         v
-+------------------------+
-| Arduino Nano #2        |
-| (Car Receiver)         |
-+------------------------+
-         |
-         | L298N Motor Driver Pins
-         v
-+------------------------+
-| 4 DC Motors            |
-| (Left & Right Pair)    |
-+------------------------+
+```text
+LAPTOP (macOS)
+┌─────────────────────────────────────────────────────────┐
+│ Live Camera Feed (AVFoundation)                         │
+│   ↓                                                     │
+│ OpenCV & MediaPipe Hands (21 3D Landmarks)               │
+│   ↓                                                     │
+│ Gesture Classifier & Temporal Hysteresis                │
+│   ↓                                                     │
+│ Safety Rules Engine (Camera/Confidence/GUI Check)       │
+│   ↓                                                     │
+│ WebSocket Client Manager (ws://192.168.4.1:81)          │
+└─────────────────────────────────────────────────────────┘
+                            │
+                            │ Structured JSON Packets
+                            │ {"command":"F","speed":180,"sequence":125}
+                            ▼
+CAR (ESP32 Controller)
+┌─────────────────────────────────────────────────────────┐
+│ ESP32 Wi-Fi SoftAP ("GestureCar" @ 192.168.4.1)         │
+│   ↓                                                     │
+│ WebSocket Server (Port 81)                              │
+│   ↓                                                     │
+│ ArduinoJson Deserializer & Telemetry Broadcaster        │
+│   ↓                                                     │
+│ 500ms Hardware Watchdog Safety Controller               │
+│   ↓                                                     │
+│ Motor Controller (L298N via ESP32 LEDC PWM Channels)    │
+│   ↓                                                     │
+│ 4 DC Motors (Left & Right Pair)                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## ✋ Gesture Mapping Table
 
-| Gesture | Command | ASCII Code | Description | Visual Action |
+| Gesture | Command | Code | Motor Action | Visual Feedback |
 | :--- | :--- | :---: | :--- | :--- |
-| ☝️ **One Finger Up** | FORWARD | `F` | Index finger extended UP, others folded | Car drives forward |
-| 👇 **One Finger Down** | BACKWARD | `B` | Index finger extended DOWN, others folded | Car reverses backward |
-| 👈 **Pointing Left** | LEFT | `L` | Index finger extended LEFT, others folded | Car turns left (skid steer) |
-| 👉 **Pointing Right** | RIGHT | `R` | Index finger extended RIGHT, others folded | Car turns right (skid steer) |
-| ✋ **Open Palm** | STOP | `S` | All 5 fingers fully extended | Car stops smoothly |
-| ✊ **Fist** | EMERGENCY STOP | `E` | All 5 fingers folded/curled into a fist | Immediate emergency lock |
+| ☝️ **One Finger Up** | FORWARD | `F` | Both left & right motors drive forward | Emerald Green badge |
+| 👇 **One Finger Down** | BACKWARD | `B` | Both left & right motors drive in reverse | Blue badge |
+| 👈 **Pointing Left** | LEFT | `L` | Left wheels reverse, right wheels drive forward | Orange badge |
+| 👉 **Pointing Right** | RIGHT | `R` | Left wheels drive forward, right wheels reverse | Purple badge |
+| ✋ **Open Palm** | STOP | `S` | All motor PWM set to 0 (Smooth Stop) | Amber badge |
+| ✊ **Closed Fist** | EMERGENCY STOP | `E` | Immediate emergency brake & lock | Red badge |
 
 ---
 
-## 🛡️ Safety & Fail-Safe Features
+## 🔌 ESP32 to L298N Wiring & Pin Mapping
 
-1. **No Hand Detected**: Instantly sends `STOP` (`S`).
-2. **Camera Disconnected**: Instantly sends `STOP` (`S`).
-3. **Low Confidence (< 70%)**: Instantly sends `STOP` (`S`).
-4. **Emergency Fist Gesture**: Triggers immediate `EMERGENCY STOP` (`E`).
-5. **Emergency GUI Button**: One-click prominent override triggering `EMERGENCY STOP` (`E`).
-6. **Application Closure**: Clean exit trap sending `STOP` over serial before releasing serial ports and threads.
-7. **Temporal Hysteresis**: Requires gesture consistency across $N$ consecutive frames (default 5 frames) to prevent erratic command switching.
-8. **Hardware Watchdog**: Receiver Arduino automatically shuts down motors if no RF packet is received within **500ms**.
-
----
-
-## ⚡ Performance Optimization (20-30 FPS)
-
-* **Threaded Camera Capture**: Asynchronous video acquisition via OpenCV `AVFoundation` backend prevents GUI thread blocking.
-* **Resized Frame Processing**: Default $640 \times 480$ frame resolution balances tracking precision and speed.
-* **Non-Blocking Serial Queue**: Background PySerial worker handles command dispatches without interrupting vision pipeline execution.
-* **Command Deduplication**: Transmits commands only when state changes or on heartbeat keep-alive ticks.
+| ESP32 Pin | L298N Module Pin | Function | Notes |
+| :--- | :--- | :--- | :--- |
+| **GPIO 14** | **ENA** | Left Motors Speed | ESP32 LEDC PWM Channel 0 |
+| **GPIO 27** | **IN1** | Left Motors Direction 1 | Digital Output |
+| **GPIO 26** | **IN2** | Left Motors Direction 2 | Digital Output |
+| **GPIO 32** | **ENB** | Right Motors Speed | ESP32 LEDC PWM Channel 1 |
+| **GPIO 25** | **IN3** | Right Motors Direction 1 | Digital Output |
+| **GPIO 33** | **IN4** | Right Motors Direction 2 | Digital Output |
+| **GND** | **GND** | **COMMON GROUND** | ⚠️ Connect to Battery GND & ESP32 GND |
+| **VIN / 5V** | **5V Out** | Power Input | From L298N 5V regulator if jumper attached |
+| — | **12V In** | Battery Pack + | Connect to +7.4V to +12V battery pack |
 
 ---
 
-## 🔌 Hardware Wiring & Pin Mapping
-
-### 1. Arduino Nano #1 (Transmitter)
-
-| nRF24L01 Pin | Arduino Nano Pin | Notes |
-| :--- | :--- | :--- |
-| **VCC** | **3.3V** | ⚠️ Add 10µF capacitor across VCC & GND! |
-| **GND** | **GND** | |
-| **CE** | **D9** | Configurable in `transmitter.ino` |
-| **CSN** | **D10** | Configurable in `transmitter.ino` |
-| **SCK** | **D13** | Hardware SPI |
-| **MOSI** | **D11** | Hardware SPI |
-| **MISO** | **D12** | Hardware SPI |
-
----
-
-### 2. Arduino Nano #2 (Car Receiver & L298N)
-
-#### nRF24L01 to Arduino Nano #2
-| nRF24L01 Pin | Arduino Nano Pin | Notes |
-| :--- | :--- | :--- |
-| **VCC** | **3.3V** | ⚠️ Add 10µF capacitor across VCC & GND! |
-| **GND** | **GND** | |
-| **CE** | **D9** | |
-| **CSN** | **D10** | |
-| **SCK** | **D13** | |
-| **MOSI** | **D11** | |
-| **MISO** | **D12** | |
-
-#### L298N Motor Driver to Arduino Nano #2
-| L298N Pin | Arduino Nano Pin | Function |
-| :--- | :--- | :--- |
-| **ENA** | **D5 (PWM)** | Left Motors Speed Control |
-| **IN1** | **D2** | Left Motors Direction 1 |
-| **IN2** | **D3** | Left Motors Direction 2 |
-| **ENB** | **D6 (PWM)** | Right Motors Speed Control |
-| **IN3** | **D4** | Right Motors Direction 1 |
-| **IN4** | **D7** | Right Motors Direction 2 |
-| **GND** | **GND** | **COMMON GROUND** (Connect to Battery GND & Arduino GND) |
-| **12V** | **Battery +** | External Power (+7.4V to +12V from 2x 18650 batteries) |
-
----
-
-## 📦 Project Structure
+## 📦 Modular Project Structure
 
 ```text
 gesture-car/
-├── config.py                  # Settings, thresholds, gesture metadata, UI colors
-├── camera.py                  # Threaded OpenCV camera capture
-├── gesture_detector.py        # MediaPipe Hands landmark extraction & drawing
-├── gesture_classifier.py      # Geometric landmark classification & temporal hysteresis
-├── serial_manager.py          # PySerial worker threads & port auto-discovery
-├── car_controller.py          # Safety state machine & heartbeat keep-alive
-├── ui.py                      # Modern dark GUI with live feed & settings sliders
-├── main.py                    # Application launcher
-├── requirements.txt           # Dependency specification
-└── arduino/
-    ├── transmitter/
-    │   └── transmitter.ino    # USB Serial to nRF24L01 transmitter sketch
-    └── receiver/
-        └── receiver.ino       # nRF24L01 to L298N motor driver receiver sketch
+├── main.py                    # Application launcher (PySide6 QApplication event loop)
+├── config.py                  # Settings, Wi-Fi credentials, thresholds, Qt styling
+├── camera.py                  # Threaded OpenCV camera acquisition (1-frame buffer for macOS)
+├── gesture_detector.py        # MediaPipe Hands detector (Tasks & Solutions API)
+├── gesture_classifier.py      # Geometric landmark classifier with squared distances & hysteresis
+├── safety.py                  # Safety rules engine (camera, confidence, GUI overrides)
+├── car_controller.py          # Command state machine, deduplication, & heartbeat timer
+├── websocket_manager.py       # Async WebSocket client manager & Qt signal serializer
+├── ui.py                      # Modern PySide6 Qt6 desktop GUI dashboard
+├── requirements.txt           # Python dependencies
+│
+└── esp32/
+    ├── main.ino               # Main ESP32 Arduino sketch
+    ├── config.h               # GPIO pin assignments, AP credentials, safety thresholds
+    ├── wifi_manager.h         # Wi-Fi SoftAP controller header
+    ├── wifi_manager.cpp       # SoftAP initialization implementation
+    ├── websocket_server.h     # WebSocket server header
+    ├── websocket_server.cpp   # WebSocket JSON request handler & telemetry broadcaster
+    ├── motor_controller.h     # L298N Motor driver header
+    ├── motor_controller.cpp   # Motor direction & ESP32 LEDC PWM implementation
+    ├── safety_controller.h    # 500ms Hardware Watchdog timer header
+    └── safety_controller.cpp  # Watchdog auto-stop implementation
 ```
 
 ---
 
-## 💻 macOS Installation & Quick Start Guide
+## 🏗️ 10-Stage Development & Deployment Guide
 
-### 1. Clone or Open Project Directory
+### Stage 1: ESP32 Wi-Fi SoftAP Setup
+Open Arduino IDE, upload `esp32/main.ino`. Turn on ESP32 and confirm the Wi-Fi network `GestureCar` appears on your laptop.
+
+### Stage 2: Laptop → ESP32 WebSocket Test
+Connect your laptop Wi-Fi to `GestureCar` (Password: `12345678`). Run `.venv/bin/python3 main.py` and verify `CONNECTED 🟢` badge in PySide6 GUI.
+
+### Stage 3: ESP32 → L298N → Motors Verification
+Power the L298N motor driver with a 2x 18650 Li-ion battery pack (+7.4V). Verify motor direction.
+
+### Stage 4: Keyboard / GUI Motor Speed Control Test
+Adjust the motor speed slider in the PySide6 dashboard (100 - 255 PWM).
+
+### Stage 5: Camera Stream Verification
+Verify 60 FPS live video preview on the left panel of PySide6 GUI.
+
+### Stage 6 & 7: MediaPipe Hand Tracking & Gesture Classification
+Hold your hand in front of the webcam. Test each of the 6 gestures (Index Up, Index Down, Left, Right, Open Palm, Fist).
+
+### Stage 8: Wireless Car Control Integration
+Verify hand gesture controls driving the physical car wirelessly.
+
+### Stage 9: Safety System & Timeout Validation
+Turn off laptop Wi-Fi or close app -> verify ESP32 auto-stops motors within **500ms** (Watchdog timeout).
+
+### Stage 10: Performance & Latency Optimization
+Verify target 30–60 FPS camera acquisition with sub-30ms end-to-end WebSocket transmission delay.
+
+---
+
+## 💻 macOS Installation & Launch Instructions
+
+### 1. Install Dependencies in Python `.venv`
 ```bash
 cd "/Users/apple/iot software"
-```
-
-### 2. Create Python Virtual Environment & Install Dependencies
-```bash
-python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 3. macOS Privacy Permissions
-On macOS, ensure Python/Terminal has permission to access the webcam:
-> **System Settings > Privacy & Security > Camera > Grant access to Terminal / iTerm / IDE**.
-
-### 4. Upload Arduino Sketches
-1. Open `arduino/transmitter/transmitter.ino` in Arduino IDE and upload to **Arduino Nano #1**.
-2. Open `arduino/receiver/receiver.ino` in Arduino IDE and upload to **Arduino Nano #2**.
-   *(Requires the **RF24 library** by TMRh20 installed in Arduino IDE via Tools > Manage Libraries)*.
-
-### 5. Launch Application
+### 2. Launch PySide6 GUI Application
 ```bash
-source .venv/bin/activate
-python3 main.py
+.venv/bin/python3 main.py
 ```
 
 ---
 
-## 🧪 Testing Procedure
+## 🛠️ Arduino IDE Setup for ESP32
 
-1. **Camera Feed & Gesture Verification**:
-   - Launch `python3 main.py`.
-   - Hold your hand in front of the laptop camera.
-   - Test each gesture:
-     - ☝️ **Index Up**: Verify GUI shows `FORWARD` (`F`).
-     - 👇 **Index Down**: Verify GUI shows `BACKWARD` (`B`).
-     - 👈 **Index Left**: Verify GUI shows `LEFT` (`L`).
-     - 👉 **Index Right**: Verify GUI shows `RIGHT` (`R`).
-     - ✋ **Open Palm**: Verify GUI shows `STOP` (`S`).
-     - ✊ **Fist**: Verify GUI shows `EMERGENCY STOP` (`E`).
-   - Remove hand from camera view -> verify GUI instantly switches to `STOP` (`S`).
-
-2. **Serial Link Test**:
-   - Plug in Arduino Nano #1 (Transmitter).
-   - Select its port from the dropdown menu in GUI (e.g. `/dev/cu.usbserial-1410`).
-   - Click **Connect**.
-   - Watch the **Telemetry Log** in GUI for `TX` commands and `ACK:F`, `ACK:B` responses.
-
-3. **Car Receiver & Motor Direction Test**:
-   - Power up the car battery pack.
-   - Perform gestures and observe motor rotation:
-     - `FORWARD`: Left & Right wheels spin forward.
-     - `BACKWARD`: Left & Right wheels spin in reverse.
-     - `LEFT`: Left wheels reverse/stop, Right wheels spin forward.
-     - `RIGHT`: Left wheels spin forward, Right wheels reverse/stop.
-   - Turn off transmitter or close laptop app -> confirm car motors stop within **500ms** (Watchdog check).
-
----
-
-## 🔍 Troubleshooting Guide
-
-| Problem | Cause | Solution |
-| :--- | :--- | :--- |
-| **Camera Feed Blank / Black Window** | macOS privacy restriction or invalid camera index | Grant Camera permissions in **System Settings > Privacy & Security > Camera**. Change `CAMERA_INDEX` in `config.py` if using external camera. |
-| **nRF24L01 Not Transmitting (`RF_FAIL`)** | Insufficient 3.3V power stability on nRF24L01 | Solder a **10µF - 100µF electrolytic capacitor** directly between VCC and GND pins of the nRF24L01 module. |
-| **Serial Port Not Found** | Missing CH340 / FTDI USB driver | Install CH340 driver for macOS if using clone Arduino Nanos. Click the refresh button 🔄 in GUI. |
-| **Motors Spinning Opposite Direction** | Inverted motor wiring | Swap motor wire leads on L298N terminals `OUT1/OUT2` or `OUT3/OUT4`. |
-| **Erratic Command Switching** | Hand jitter or lighting issue | Increase **Stability Buffer** slider in GUI (e.g. from 5 to 7 frames) or increase **Min Confidence** slider. |
-| **Car Keeps Moving After App Close** | Lost RF packet or missing fail-safe | Verify safety watchdog code in `receiver.ino`. Ensure car GND and Arduino GND are connected. |
+1. Install **ESP32 Board Support** in Arduino IDE:
+   - Go to **Settings > Additional Boards Manager URLs** and add:
+     `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+   - Open **Tools > Board > Boards Manager**, search for **esp32**, and install.
+2. Install Required Libraries via **Tools > Manage Libraries**:
+   - **`WebSockets`** by Markus Sattler
+   - **`ArduinoJson`** (v6 or v7) by Benoit Blanchon
+3. Select Board: **ESP32 Dev Module** and upload `esp32/main.ino`.

@@ -1,327 +1,287 @@
 """
-Modern Dark Desktop GUI for Real-time AI Hand Gesture Controlled IoT Car.
+Modern PySide6 (Qt6) Desktop GUI Dashboard for ESP32 AI Hand Gesture Controlled IoT Car.
 """
 
 import time
-import tkinter as tk
-from tkinter import ttk, messagebox
-from PIL import Image, ImageTk
 import cv2
+from PIL import Image
+from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtGui import QImage, QPixmap, QFont, QColor
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QLabel, QPushButton, QSlider, QTextEdit,
+    QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QGroupBox, QSplitter
+)
 import config
 
-class CarControlUI:
-    def __init__(self, root, camera_stream, hand_detector, gesture_classifier, car_controller, serial_manager):
-        self.root = root
+class MainWindow(QMainWindow):
+    def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager, car_controller, websocket_manager):
+        super().__init__()
         self.camera_stream = camera_stream
         self.hand_detector = hand_detector
         self.gesture_classifier = gesture_classifier
+        self.safety_manager = safety_manager
         self.car_controller = car_controller
-        self.serial_manager = serial_manager
+        self.websocket_manager = websocket_manager
 
-        self.root.title("Real-Time AI Hand Gesture Controlled IoT Car")
-        self.root.geometry("1180x740")
-        self.root.configure(bg=config.BG_DARK)
-        self.root.resizable(True, True)
+        self.setWindowTitle("🤖 AI Gesture Car Controller - ESP32 Wi-Fi Edition")
+        self.resize(1180, 760)
+        self.setStyleSheet(config.QSS_DARK_THEME)
 
-        # Register serial callbacks
-        self.serial_manager.register_callbacks(
-            telemetry_cb=self._on_serial_telemetry,
-            status_cb=self._on_serial_status_change
-        )
+        # Wire PySide6 Signals from WebSocket Manager
+        self.websocket_manager.connection_status_changed.connect(self._on_ws_status_changed)
+        self.websocket_manager.telemetry_received.connect(self._on_ws_telemetry)
+        self.websocket_manager.log_emitted.connect(self._on_ws_log)
 
-        self._setup_styles()
-        self._build_layout()
-        self._refresh_serial_ports()
+        self._build_ui()
 
-        # GUI Update Loop
-        self.is_running = True
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._update_loop()
+        # Timer for 60 FPS video and tracking pipeline loop (~16ms)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._process_frame_loop)
+        self.timer.start(16)
 
-    def _setup_styles(self):
-        style = ttk.Style()
-        style.theme_use('clam')
+    def _build_ui(self):
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(12)
 
-        # Configure dark theme colors for ttk components
-        style.configure('.', background=config.BG_DARK, foreground=config.TEXT_PRIMARY)
-        style.configure('TFrame', background=config.BG_DARK)
-        style.configure('Card.TFrame', background=config.BG_CARD, relief='flat', borderwidth=1)
-        style.configure('TLabel', background=config.BG_DARK, foreground=config.TEXT_PRIMARY, font=('Helvetica', 10))
-        style.configure('Header.TLabel', font=('Helvetica', 14, 'bold'), foreground=config.ACCENT_PRIMARY)
-        style.configure('CardHeader.TLabel', background=config.BG_CARD, font=('Helvetica', 11, 'bold'), foreground=config.TEXT_MUTED)
-        style.configure('CardValue.TLabel', background=config.BG_CARD, font=('Helvetica', 16, 'bold'), foreground=config.ACCENT_PRIMARY)
-        style.configure('Status.TLabel', font=('Helvetica', 10, 'bold'))
+        # ====================================================
+        # LEFT COLUMN: Live Camera Feed & Primary Controls
+        # ====================================================
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(10)
 
-        # Button styles
-        style.configure('TButton', font=('Helvetica', 10, 'bold'), padding=6)
-        style.configure('Accent.TButton', background=config.ACCENT_PRIMARY, foreground='#ffffff')
-        style.configure('Danger.TButton', background=config.ACCENT_DANGER, foreground='#ffffff')
+        # Header Title
+        title_lbl = QLabel("🤖 GESTURE CAR CONTROLLER")
+        title_lbl.setProperty("class", "Header")
+        title_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #00d2ff;")
+        left_layout.addWidget(title_lbl)
 
-        # Combobox style
-        style.configure('TCombobox', fieldbackground=config.BG_CARD_LIGHT, background=config.BG_CARD_LIGHT, foreground=config.TEXT_PRIMARY)
+        # Video Preview Label (Canvas)
+        self.video_label = QLabel()
+        self.video_label.setFixedSize(config.FRAME_WIDTH, config.FRAME_HEIGHT)
+        self.video_label.setStyleSheet("background-color: #000000; border: 1px solid #2c3e50; border-radius: 8px;")
+        self.video_label.setAlignment(Qt.AlignCenter)
+        left_layout.addWidget(self.video_label)
 
-    def _build_layout(self):
-        # Main Grid Layout (2 columns: Video on Left, Controls on Right)
-        self.main_container = ttk.Frame(self.root, padding=12)
-        self.main_container.pack(fill=tk.BOTH, expand=True)
+        # Main Action Buttons (Start, Pause, Emergency Stop)
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(10)
 
-        self.main_container.columnconfigure(0, weight=3)
-        self.main_container.columnconfigure(1, weight=2)
-        self.main_container.rowconfigure(0, weight=1)
+        self.btn_start = QPushButton("▶ START SYSTEM")
+        self.btn_start.setObjectName("btn_start")
+        self.btn_start.setMinimumHeight(42)
+        self.btn_start.clicked.connect(self._toggle_system_active)
+        btn_box.addWidget(self.btn_start)
 
-        # ----------------------------------------------------
-        # LEFT COLUMN: Video Stream & Overlay
-        # ----------------------------------------------------
-        left_frame = ttk.Frame(self.main_container)
-        left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        self.btn_emergency = QPushButton("🚨 EMERGENCY STOP 🚨")
+        self.btn_emergency.setObjectName("btn_emergency")
+        self.btn_emergency.setMinimumHeight(42)
+        self.btn_emergency.clicked.connect(self._toggle_emergency_stop)
+        btn_box.addWidget(self.btn_emergency)
 
-        # Title Header
-        title_label = ttk.Label(left_frame, text="AI GESTURE CONTROL CENTER", style='Header.TLabel')
-        title_label.pack(anchor="w", pady=(0, 8))
+        left_layout.addLayout(btn_box)
+        main_layout.addLayout(left_layout, stretch=3)
 
-        # Canvas for video frame
-        self.video_canvas = tk.Canvas(
-            left_frame, 
-            width=config.FRAME_WIDTH, 
-            height=config.FRAME_HEIGHT, 
-            bg="#000000", 
-            highlightthickness=1,
-            highlightbackground="#2c3e50"
-        )
-        self.video_canvas.pack(fill=tk.BOTH, expand=True)
+        # ====================================================
+        # RIGHT COLUMN: Real-Time Telemetry & Tuning Controls
+        # ====================================================
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(10)
 
-        # Bottom Bar under Video for System Action Buttons
-        video_btn_bar = ttk.Frame(left_frame, padding=(0, 8, 0, 0))
-        video_btn_bar.pack(fill=tk.X)
-
-        self.btn_start_stop = tk.Button(
-            video_btn_bar, 
-            text="▶ START SYSTEM", 
-            font=('Helvetica', 11, 'bold'),
-            bg=config.ACCENT_SUCCESS, 
-            fg="#ffffff", 
-            activebackground="#27ae60",
-            relief=tk.FLAT,
-            command=self._toggle_system_state
-        )
-        self.btn_start_stop.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-
-        self.btn_emergency = tk.Button(
-            video_btn_bar, 
-            text="🚨 EMERGENCY STOP 🚨", 
-            font=('Helvetica', 12, 'bold'),
-            bg=config.ACCENT_DANGER, 
-            fg="#ffffff", 
-            activebackground="#c0392b",
-            relief=tk.FLAT,
-            command=self._on_emergency_click
-        )
-        self.btn_emergency.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
-
-        # ----------------------------------------------------
-        # RIGHT COLUMN: Status, Telemetry & Settings
-        # ----------------------------------------------------
-        right_frame = ttk.Frame(self.main_container)
-        right_frame.grid(row=0, column=1, sticky="nsew")
-
-        # --- 1. Serial Port Selector Card ---
-        serial_card = ttk.Frame(right_frame, style='Card.TFrame', padding=10)
-        serial_card.pack(fill=tk.X, pady=(0, 8))
-
-        ttk.Label(serial_card, text="SERIAL CONNECTION", style='CardHeader.TLabel').pack(anchor="w")
-
-        serial_row = ttk.Frame(serial_card, style='Card.TFrame')
-        serial_row.pack(fill=tk.X, pady=(5, 0))
-
-        self.port_combo = ttk.Combobox(serial_row, state="readonly", width=18)
-        self.port_combo.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.btn_refresh_ports = ttk.Button(serial_row, text="🔄", width=3, command=self._refresh_serial_ports)
-        self.btn_refresh_ports.pack(side=tk.LEFT, padx=(0, 5))
-
-        self.btn_connect_serial = ttk.Button(serial_row, text="Connect", command=self._toggle_serial_connection)
-        self.btn_connect_serial.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.lbl_serial_status = ttk.Label(serial_card, text="Disconnected 🔴", style='Status.TLabel', background=config.BG_CARD, foreground=config.ACCENT_DANGER)
-        self.lbl_serial_status.pack(anchor="w", pady=(5, 0))
-
-        # --- 2. Live Status Cards (Grid 2x2) ---
-        stats_grid = ttk.Frame(right_frame)
-        stats_grid.pack(fill=tk.X, pady=(0, 8))
-        stats_grid.columnconfigure(0, weight=1)
-        stats_grid.columnconfigure(1, weight=1)
+        # --- 1. Status Cards Grid (2x3 Grid) ---
+        status_box = QFrame()
+        status_box.setProperty("class", "Card")
+        status_box.setStyleSheet("background-color: #1a1a1e; border-radius: 8px; border: 1px solid #2c3e50; padding: 8px;")
+        grid = QGridLayout(status_box)
+        grid.setSpacing(10)
 
         # Card: Detected Gesture
-        card_gesture = ttk.Frame(stats_grid, style='Card.TFrame', padding=10)
-        card_gesture.grid(row=0, column=0, sticky="nsew", padx=(0, 4), pady=4)
-        ttk.Label(card_gesture, text="DETECTED GESTURE", style='CardHeader.TLabel').pack(anchor="w")
-        self.lbl_gesture_val = ttk.Label(card_gesture, text="🚫 NONE", style='CardValue.TLabel')
-        self.lbl_gesture_val.pack(anchor="w", pady=(4, 0))
+        grid.addWidget(self._create_card_header("DETECTED GESTURE"), 0, 0)
+        self.lbl_gesture_val = QLabel("🚫 NONE")
+        self.lbl_gesture_val.setStyleSheet("font-size: 16px; font-weight: bold; color: #95a5a6;")
+        grid.addWidget(self.lbl_gesture_val, 1, 0)
 
-        # Card: Active Car Command
-        card_cmd = ttk.Frame(stats_grid, style='Card.TFrame', padding=10)
-        card_cmd.grid(row=0, column=1, sticky="nsew", padx=(4, 0), pady=4)
-        ttk.Label(card_cmd, text="CAR COMMAND", style='CardHeader.TLabel').pack(anchor="w")
-        self.lbl_command_val = ttk.Label(card_cmd, text="✋ STOP [S]", style='CardValue.TLabel')
-        self.lbl_command_val.pack(anchor="w", pady=(4, 0))
+        # Card: Car Movement Command
+        grid.addWidget(self._create_card_header("CAR COMMAND"), 0, 1)
+        self.lbl_command_val = QLabel("✋ STOP [S]")
+        self.lbl_command_val.setStyleSheet("font-size: 16px; font-weight: bold; color: #e67e22;")
+        grid.addWidget(self.lbl_command_val, 1, 1)
 
         # Card: Confidence %
-        card_conf = ttk.Frame(stats_grid, style='Card.TFrame', padding=10)
-        card_conf.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=4)
-        ttk.Label(card_conf, text="CONFIDENCE", style='CardHeader.TLabel').pack(anchor="w")
-        self.lbl_conf_val = ttk.Label(card_conf, text="0.0%", style='CardValue.TLabel')
-        self.lbl_conf_val.pack(anchor="w", pady=(4, 0))
+        grid.addWidget(self._create_card_header("CONFIDENCE"), 2, 0)
+        self.lbl_conf_val = QLabel("0.0%")
+        self.lbl_conf_val.setStyleSheet("font-size: 16px; font-weight: bold; color: #00d2ff;")
+        grid.addWidget(self.lbl_conf_val, 3, 0)
 
         # Card: System FPS
-        card_fps = ttk.Frame(stats_grid, style='Card.TFrame', padding=10)
-        card_fps.grid(row=1, column=1, sticky="nsew", padx=(4, 0), pady=4)
-        ttk.Label(card_fps, text="CAMERA FPS", style='CardHeader.TLabel').pack(anchor="w")
-        self.lbl_fps_val = ttk.Label(card_fps, text="0.0 FPS", style='CardValue.TLabel')
-        self.lbl_fps_val.pack(anchor="w", pady=(4, 0))
+        grid.addWidget(self._create_card_header("CAMERA FPS"), 2, 1)
+        self.lbl_fps_val = QLabel("0.0 FPS")
+        self.lbl_fps_val.setStyleSheet("font-size: 16px; font-weight: bold; color: #00d2ff;")
+        grid.addWidget(self.lbl_fps_val, 3, 1)
 
-        # --- 3. Gesture & Car Settings Card ---
-        settings_card = ttk.Frame(right_frame, style='Card.TFrame', padding=10)
-        settings_card.pack(fill=tk.X, pady=(0, 8))
+        # Card: ESP32 Wi-Fi / WebSocket Link
+        grid.addWidget(self._create_card_header("ESP32 LINK"), 4, 0)
+        self.lbl_ws_status = QLabel("DISCONNECTED 🔴")
+        self.lbl_ws_status.setStyleSheet("font-size: 13px; font-weight: bold; color: #e74c3c;")
+        grid.addWidget(self.lbl_ws_status, 5, 0)
 
-        ttk.Label(settings_card, text="SETTINGS & TUNING", style='CardHeader.TLabel').pack(anchor="w", pady=(0, 5))
+        # Card: Car Battery %
+        grid.addWidget(self._create_card_header("CAR BATTERY"), 4, 1)
+        self.lbl_battery_val = QLabel("N/A 🔋")
+        self.lbl_battery_val.setStyleSheet("font-size: 13px; font-weight: bold; color: #a4b0be;")
+        grid.addWidget(self.lbl_battery_val, 5, 1)
 
-        # Confidence Threshold Slider
-        conf_row = ttk.Frame(settings_card, style='Card.TFrame')
-        conf_row.pack(fill=tk.X, pady=2)
-        ttk.Label(conf_row, text="Min Confidence:", background=config.BG_CARD).pack(side=tk.LEFT)
-        self.lbl_conf_setting = ttk.Label(conf_row, text="0.70", background=config.BG_CARD, font=('Helvetica', 9, 'bold'))
-        self.lbl_conf_setting.pack(side=tk.RIGHT)
-        self.slider_conf = ttk.Scale(settings_card, from_=0.50, to=0.95, value=0.70, command=self._on_conf_slider_change)
-        self.slider_conf.pack(fill=tk.X, pady=(0, 5))
+        right_layout.addWidget(status_box)
 
-        # Stability Frame Threshold Slider
-        stab_row = ttk.Frame(settings_card, style='Card.TFrame')
-        stab_row.pack(fill=tk.X, pady=2)
-        ttk.Label(stab_row, text="Stability Buffer (Frames):", background=config.BG_CARD).pack(side=tk.LEFT)
-        self.lbl_stab_setting = ttk.Label(stab_row, text="5", background=config.BG_CARD, font=('Helvetica', 9, 'bold'))
-        self.lbl_stab_setting.pack(side=tk.RIGHT)
-        self.slider_stab = ttk.Scale(settings_card, from_=1, to=10, value=5, command=self._on_stab_slider_change)
-        self.slider_stab.pack(fill=tk.X, pady=(0, 5))
+        # --- 2. Tuning Sliders Card ---
+        sliders_box = QFrame()
+        sliders_box.setStyleSheet("background-color: #1a1a1e; border-radius: 8px; border: 1px solid #2c3e50; padding: 10px;")
+        slider_layout = QVBoxLayout(sliders_box)
+
+        hdr_settings = QLabel("SETTINGS & TUNING")
+        hdr_settings.setStyleSheet("font-size: 12px; font-weight: bold; color: #a4b0be;")
+        slider_layout.addWidget(hdr_settings)
 
         # Motor Speed PWM Slider
-        speed_row = ttk.Frame(settings_card, style='Card.TFrame')
-        speed_row.pack(fill=tk.X, pady=2)
-        ttk.Label(speed_row, text="Motor PWM Speed:", background=config.BG_CARD).pack(side=tk.LEFT)
-        self.lbl_speed_setting = ttk.Label(speed_row, text="220", background=config.BG_CARD, font=('Helvetica', 9, 'bold'))
-        self.lbl_speed_setting.pack(side=tk.RIGHT)
-        self.slider_speed = ttk.Scale(settings_card, from_=100, to=255, value=220, command=self._on_speed_slider_change)
-        self.slider_speed.pack(fill=tk.X)
+        speed_hdr = QHBoxLayout()
+        speed_hdr.addWidget(QLabel("Motor Speed (PWM):"))
+        self.lbl_speed_val = QLabel("180 (71%)")
+        self.lbl_speed_val.setStyleSheet("font-weight: bold; color: #00d2ff;")
+        speed_hdr.addWidget(self.lbl_speed_val, alignment=Qt.AlignRight)
+        slider_layout.addLayout(speed_hdr)
 
-        # --- 4. Serial Command Telemetry Log ---
-        log_card = ttk.Frame(right_frame, style='Card.TFrame', padding=10)
-        log_card.pack(fill=tk.BOTH, expand=True)
+        self.slider_speed = QSlider(Qt.Horizontal)
+        self.slider_speed.setRange(100, 255)
+        self.slider_speed.setValue(180)
+        self.slider_speed.valueChanged.connect(self._on_speed_slider_changed)
+        slider_layout.addWidget(self.slider_speed)
 
-        log_header = ttk.Frame(log_card, style='Card.TFrame')
-        log_header.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(log_header, text="TELEMETRY & COMMAND LOG", style='CardHeader.TLabel').pack(side=tk.LEFT)
-        btn_clear = ttk.Button(log_header, text="Clear", width=6, command=self._clear_log)
-        btn_clear.pack(side=tk.RIGHT)
+        # Stability Frame Buffer Slider
+        stab_hdr = QHBoxLayout()
+        stab_hdr.addWidget(QLabel("Stability Buffer (Frames):"))
+        self.lbl_stab_val = QLabel("5")
+        self.lbl_stab_val.setStyleSheet("font-weight: bold; color: #00d2ff;")
+        stab_hdr.addWidget(self.lbl_stab_val, alignment=Qt.AlignRight)
+        slider_layout.addLayout(stab_hdr)
 
-        self.log_text = tk.Text(
-            log_card, 
-            height=8, 
-            bg="#0d0d0f", 
-            fg=config.TEXT_PRIMARY, 
-            font=('Courier', 9),
-            wrap=tk.WORD,
-            relief=tk.FLAT,
-            highlightthickness=1,
-            highlightbackground="#2c3e50"
-        )
-        self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.slider_stab = QSlider(Qt.Horizontal)
+        self.slider_stab.setRange(1, 10)
+        self.slider_stab.setValue(5)
+        self.slider_stab.valueChanged.connect(self._on_stab_slider_changed)
+        slider_layout.addWidget(self.slider_stab)
 
-    def _refresh_serial_ports(self):
-        ports = self.serial_manager.list_ports()
-        self.port_combo['values'] = ports
-        if ports:
-            self.port_combo.current(0)
-        else:
-            self.port_combo.set("No Ports Found")
+        # Min Confidence Threshold Slider
+        conf_hdr = QHBoxLayout()
+        conf_hdr.addWidget(QLabel("Min Landmark Confidence:"))
+        self.lbl_conf_setting = QLabel("0.70")
+        self.lbl_conf_setting.setStyleSheet("font-weight: bold; color: #00d2ff;")
+        conf_hdr.addWidget(self.lbl_conf_setting, alignment=Qt.AlignRight)
+        slider_layout.addLayout(conf_hdr)
 
-    def _toggle_serial_connection(self):
-        if self.serial_manager.is_connected:
-            self.serial_manager.disconnect()
-            self.btn_connect_serial.config(text="Connect")
-        else:
-            selected_port = self.port_combo.get()
-            if not selected_port or selected_port == "No Ports Found":
-                messagebox.showwarning("Serial Warning", "Please select a valid serial port.")
-                return
+        self.slider_conf = QSlider(Qt.Horizontal)
+        self.slider_conf.setRange(50, 95)
+        self.slider_conf.setValue(70)
+        self.slider_conf.valueChanged.connect(self._on_conf_slider_changed)
+        slider_layout.addWidget(self.slider_conf)
 
-            success, msg = self.serial_manager.connect(selected_port)
-            if success:
-                self.btn_connect_serial.config(text="Disconnect")
-                self._log_entry("SYSTEM", f"Connected to {selected_port}")
-            else:
-                messagebox.showerror("Serial Error", msg)
+        right_layout.addWidget(sliders_box)
 
-    def _toggle_system_state(self):
-        if self.car_controller.is_active:
-            self.car_controller.stop()
-            self.btn_start_stop.config(text="▶ START SYSTEM", bg=config.ACCENT_SUCCESS)
-            self._log_entry("SYSTEM", "System Stopped by User")
-        else:
-            self.car_controller.start()
-            self.btn_start_stop.config(text="⏸ PAUSE SYSTEM", bg=config.ACCENT_WARNING)
-            self._log_entry("SYSTEM", "System Started")
+        # --- 3. Telemetry Log Window ---
+        log_box = QFrame()
+        log_box.setStyleSheet("background-color: #1a1a1e; border-radius: 8px; border: 1px solid #2c3e50; padding: 10px;")
+        log_layout = QVBoxLayout(log_box)
 
-    def _on_emergency_click(self):
-        if self.car_controller.emergency_override:
-            self.car_controller.clear_emergency_stop()
-            self.btn_emergency.config(text="🚨 EMERGENCY STOP 🚨", bg=config.ACCENT_DANGER)
-            self._log_entry("SYSTEM", "Emergency Stop Cleared")
-        else:
-            self.car_controller.trigger_emergency_stop()
-            self.btn_emergency.config(text="CLEAR EMERGENCY ⚠️", bg=config.ACCENT_WARNING)
-            self._log_entry("EMERGENCY", "EMERGENCY STOP ACTIVATED VIA GUI BUTTON")
+        log_hdr_box = QHBoxLayout()
+        log_hdr_box.addWidget(QLabel("WEBSOCKET TELEMETRY LOG"))
+        btn_clear_log = QPushButton("Clear")
+        btn_clear_log.setMaximumWidth(60)
+        btn_clear_log.clicked.connect(self._clear_log)
+        log_hdr_box.addWidget(btn_clear_log, alignment=Qt.AlignRight)
+        log_layout.addLayout(log_hdr_box)
 
-    def _on_conf_slider_change(self, val):
-        conf = round(float(val), 2)
-        self.lbl_conf_setting.config(text=f"{conf:.2f}")
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        log_layout.addWidget(self.log_text)
+
+        right_layout.addWidget(log_box, stretch=1)
+
+        main_layout.addLayout(right_layout, stretch=2)
+
+    def _create_card_header(self, text):
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #a4b0be;")
+        return lbl
+
+    def _on_speed_slider_changed(self, val):
+        pct = int((val / 255.0) * 100)
+        self.lbl_speed_val.setText(f"{val} ({pct}%)")
+        self.car_controller.set_motor_speed(val)
+
+    def _on_stab_slider_changed(self, val):
+        self.lbl_stab_val.setText(str(val))
+        self.gesture_classifier.set_stability_threshold(val)
+
+    def _on_conf_slider_changed(self, val):
+        conf = val / 100.0
+        self.lbl_conf_setting.setText(f"{conf:.2f}")
         self.hand_detector.set_confidence_thresholds(conf, conf)
 
-    def _on_stab_slider_change(self, val):
-        stab = int(float(val))
-        self.lbl_stab_setting.config(text=str(stab))
-        self.gesture_classifier.set_stability_threshold(stab)
+    def _toggle_system_active(self):
+        if self.safety_manager.system_active:
+            self.safety_manager.set_system_active(False)
+            self.car_controller.send_immediate_stop()
+            self.btn_start.setText("▶ START SYSTEM")
+            self.btn_start.setStyleSheet("background-color: #2ecc71;")
+            self._on_ws_log("SYSTEM", "System Paused by User")
+        else:
+            self.safety_manager.set_system_active(True)
+            self.btn_start.setText("⏸ PAUSE SYSTEM")
+            self.btn_start.setStyleSheet("background-color: #f39c12;")
+            self._on_ws_log("SYSTEM", "System Started")
 
-    def _on_speed_slider_change(self, val):
-        speed = int(float(val))
-        self.lbl_speed_setting.config(text=str(speed))
-        self.car_controller.set_motor_speed(speed)
+    def _toggle_emergency_stop(self):
+        if self.safety_manager.emergency_override:
+            self.safety_manager.clear_emergency_stop()
+            self.btn_emergency.setText("🚨 EMERGENCY STOP 🚨")
+            self.btn_emergency.setStyleSheet("background-color: #e74c3c;")
+            self._on_ws_log("SYSTEM", "Emergency Stop Cleared")
+        else:
+            self.safety_manager.trigger_emergency_stop()
+            self.car_controller.send_immediate_stop()
+            self.btn_emergency.setText("CLEAR EMERGENCY ⚠️")
+            self.btn_emergency.setStyleSheet("background-color: #f39c12;")
+            self._on_ws_log("EMERGENCY", "EMERGENCY STOP ACTIVATED VIA GUI BUTTON")
 
-    def _on_serial_telemetry(self, direction, message):
-        self.root.after(0, self._log_entry, direction, message)
+    @Slot(bool, str)
+    def _on_ws_status_changed(self, is_connected, status_text):
+        if is_connected:
+            self.lbl_ws_status.setText("CONNECTED 🟢")
+            self.lbl_ws_status.setStyleSheet("font-size: 13px; font-weight: bold; color: #2ecc71;")
+        else:
+            self.lbl_ws_status.setText("DISCONNECTED 🔴")
+            self.lbl_ws_status.setStyleSheet("font-size: 13px; font-weight: bold; color: #e74c3c;")
 
-    def _on_serial_status_change(self, is_connected, status_text):
-        def update():
-            if is_connected:
-                self.lbl_serial_status.config(text=f"Connected 🟢 ({self.serial_manager.current_port})", foreground=config.ACCENT_SUCCESS)
-                self.btn_connect_serial.config(text="Disconnect")
+    @Slot(dict)
+    def _on_ws_telemetry(self, data):
+        if "battery" in data:
+            self.lbl_battery_val.setText(f"{data['battery']}% 🔋")
+            if data["battery"] > 50:
+                self.lbl_battery_val.setStyleSheet("font-size: 13px; font-weight: bold; color: #2ecc71;")
             else:
-                self.lbl_serial_status.config(text="Disconnected 🔴", foreground=config.ACCENT_DANGER)
-                self.btn_connect_serial.config(text="Connect")
-        self.root.after(0, update)
+                self.lbl_battery_val.setStyleSheet("font-size: 13px; font-weight: bold; color: #f39c12;")
 
-    def _log_entry(self, tag, text):
+    @Slot(str, str)
+    def _on_ws_log(self, tag, message):
         timestamp = time.strftime("%H:%M:%S")
-        entry = f"[{timestamp}] [{tag}] {text}\n"
-        self.log_text.insert(tk.END, entry)
-        self.log_text.see(tk.END)
+        self.log_text.append(f"[{timestamp}] [{tag}] {message}")
 
     def _clear_log(self):
-        self.log_text.delete('1.0', tk.END)
+        self.log_text.clear()
 
-    def _update_loop(self):
-        if not self.is_running:
-            return
-
-        # 1. Read latest video frame
+    def _process_frame_loop(self):
+        # 1. Grab camera frame
         ret, frame, fps = self.camera_stream.read()
 
         candidate_gesture = "NONE"
@@ -330,65 +290,61 @@ class CarControlUI:
         detected = False
         confidence = 0.0
 
+        min_conf = self.slider_conf.value() / 100.0
+
         if ret and frame is not None:
-            min_conf = float(self.slider_conf.get())
-            # 2. Process Hand Detection & Landmark Extraction
+            # 2. Process Hand Detection
             detected, landmarks_list, pixel_landmarks, confidence, hand_type = self.hand_detector.process_frame(frame)
 
-            # 3. Classify Gesture & Apply Temporal Smoothing
+            # 3. Classify Gesture & Apply Hysteresis
             candidate_gesture, stable_cmd, is_stable = self.gesture_classifier.process(
                 detected, landmarks_list, confidence, min_confidence=min_conf
             )
 
-            # 4. Evaluate Car Safety Controller & Send Command
-            active_car_cmd = self.car_controller.update_gesture_command(
-                stable_cmd, is_stable, detected, ret
+            # 4. Evaluate Safety & Dispatch Command via WebSocket
+            active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
+                stable_cmd, is_stable, detected, ret, confidence, min_conf
             )
 
-            # 5. Draw sleek landmarks & bounding box on frame
-            gesture_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
-            # Convert hex color to BGR for OpenCV
-            hex_col = gesture_meta[2].lstrip('#')
+            # 5. Draw Sleek Landmarks on Frame
+            g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
+            hex_col = g_meta[2].lstrip('#')
             bgr_col = tuple(int(hex_col[i:i+2], 16) for i in (4, 2, 0))
-            
-            frame = self.hand_detector.draw_landmarks(frame, pixel_landmarks, gesture_meta[0], bgr_col)
+            frame = self.hand_detector.draw_landmarks(frame, pixel_landmarks, g_meta[0], bgr_col)
 
-            # 6. Render frame to canvas (reuse image ID for performance)
+            # 6. Render Frame to QLabel via QImage
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(rgb_frame)
-            imgtk = ImageTk.PhotoImage(image=img)
-            
-            if not hasattr(self, '_canvas_img_id') or self._canvas_img_id is None:
-                self._canvas_img_id = self.video_canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
-            else:
-                self.video_canvas.itemconfig(self._canvas_img_id, image=imgtk)
-            self.video_canvas.imgtk = imgtk
+            h, w, ch = rgb_frame.shape
+            bytes_per_line = ch * w
+            q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_img)
+            self.video_label.setPixmap(pixmap)
         else:
-            # Camera failure handling -> trigger STOP
-            active_car_cmd = self.car_controller.update_gesture_command(
-                config.CMD_STOP, True, False, False
+            active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
+                config.CMD_STOP, True, False, False, 0.0, min_conf
             )
 
-        # 7. Update UI Labels & Status Cards
+        # 7. Update Status Badges
         g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
-        self.lbl_gesture_val.config(text=f"{g_meta[1]} {g_meta[0]}", foreground=g_meta[2])
+        self.lbl_gesture_val.setText(f"{g_meta[1]} {g_meta[0]}")
+        self.lbl_gesture_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {g_meta[2]};")
 
         c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
-        self.lbl_command_val.config(text=f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]", foreground=c_meta[2])
+        self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
+        self.lbl_command_val.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {c_meta[2]};")
 
         conf_pct = confidence * 100.0 if detected else 0.0
-        self.lbl_conf_val.config(text=f"{conf_pct:.1f}%")
-        self.lbl_fps_val.config(text=f"{fps:.1f} FPS")
+        self.lbl_conf_val.setText(f"{conf_pct:.1f}%")
+        self.lbl_fps_val.setText(f"{fps:.1f} FPS")
 
-        # Schedule next UI update (~60 FPS => 16ms)
-        self.root.after(16, self._update_loop)
-
-    def _on_close(self):
-        self.is_running = False
+    def closeEvent(self, event):
+        """Clean application exit handler."""
         if self.car_controller:
-            self.car_controller.stop()
-        if self.serial_manager:
-            self.serial_manager.disconnect()
+            self.car_controller.send_immediate_stop()
+        if self.websocket_manager:
+            self.websocket_manager.stop()
         if self.camera_stream:
             self.camera_stream.stop()
-        self.root.destroy()
+        if self.hand_detector:
+            self.hand_detector.close()
+        event.accept()

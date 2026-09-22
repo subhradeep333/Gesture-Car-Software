@@ -1,29 +1,45 @@
 """
-Global Configuration for Real-time AI Hand Gesture Controlled IoT Car.
+Global Configuration for ESP32 Wi-Fi / WebSocket AI Hand Gesture Controlled IoT Car.
 """
 
-# Camera Settings
+# ESP32 Wi-Fi Access Point & WebSocket Credentials
+WIFI_SSID = "GestureCar"
+WIFI_PASS = "12345678"
+ESP32_IP = "192.168.4.1"
+WS_PORT = 81
+WS_URL = f"ws://{ESP32_IP}:{WS_PORT}"
+
+# Camera Acquisition Settings
 CAMERA_INDEX = 0
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 TARGET_FPS = 30
 
-# MediaPipe Hand Detection Settings
+# MediaPipe Hand Tracking Settings
 MAX_NUM_HANDS = 1
-MODEL_COMPLEXITY = 0  # 0 for light/fast processing, 1 for medium
+MODEL_COMPLEXITY = 0  # 0 for light/fast processing
 DEFAULT_MIN_DETECTION_CONFIDENCE = 0.70
 DEFAULT_MIN_TRACKING_CONFIDENCE = 0.70
 
-# Gesture Classifier Settings
-DEFAULT_STABILITY_FRAME_THRESHOLD = 5  # Number of consecutive frames required for command change
+# Temporal Gesture Smoothing Hysteresis
+DEFAULT_STABILITY_FRAME_THRESHOLD = 5
 
-# Car Commands (1-byte ASCII)
+# Movement Commands (1-character ASCII)
 CMD_FORWARD = 'F'
 CMD_BACKWARD = 'B'
 CMD_LEFT = 'L'
 CMD_RIGHT = 'R'
 CMD_STOP = 'S'
 CMD_EMERGENCY_STOP = 'E'
+
+# Motor Speed Defaults (PWM Range: 100 - 255)
+DEFAULT_MOTOR_SPEED = 180
+MIN_MOTOR_SPEED = 100
+MAX_MOTOR_SPEED = 255
+
+# Safety & Telemetry Timers
+SAFETY_TIMEOUT_MS = 500        # Independent ESP32 Watchdog timeout
+HEARTBEAT_INTERVAL_SEC = 0.35  # Keep-alive transmission frequency when holding command
 
 # Gesture Metadata: (Display Name, Icon, Hex Color)
 GESTURE_METADATA = {
@@ -37,23 +53,83 @@ GESTURE_METADATA = {
     "NONE": ("NO HAND DETECTED", "🚫", "#95a5a6")      # Muted Gray
 }
 
-# Serial Communication Settings
-DEFAULT_BAUD_RATE = 115200
-SERIAL_TIMEOUT = 0.1  # seconds
-HEARTBEAT_INTERVAL = 0.35  # seconds (keep-alive send interval when holding same command)
-
-# Motor Settings
-DEFAULT_MOTOR_SPEED = 220  # PWM 0-255
-MIN_MOTOR_SPEED = 100
-MAX_MOTOR_SPEED = 255
-
-# UI Theme Colors (Dark Modern Palette)
-BG_DARK = "#121214"
-BG_CARD = "#1a1a1e"
-BG_CARD_LIGHT = "#242429"
-ACCENT_PRIMARY = "#00d2ff"
-ACCENT_SUCCESS = "#2ecc71"
-ACCENT_WARNING = "#f39c12"
-ACCENT_DANGER = "#e74c3c"
-TEXT_PRIMARY = "#f1f2f6"
-TEXT_MUTED = "#a4b0be"
+# Dark Modern PySide6 Styling Palette
+QSS_DARK_THEME = """
+QMainWindow {
+    background-color: #121214;
+}
+QWidget {
+    color: #f1f2f6;
+    font-family: 'Helvetica', 'Arial', sans-serif;
+}
+QFrame.Card {
+    background-color: #1a1a1e;
+    border-radius: 8px;
+    border: 1px solid #2c3e50;
+}
+QLabel.Header {
+    font-size: 18px;
+    font-weight: bold;
+    color: #00d2ff;
+}
+QLabel.CardHeader {
+    font-size: 11px;
+    font-weight: bold;
+    color: #a4b0be;
+}
+QLabel.CardValue {
+    font-size: 16px;
+    font-weight: bold;
+}
+QPushButton {
+    background-color: #242429;
+    color: #ffffff;
+    border: 1px solid #34495e;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #2c3e50;
+}
+QPushButton#btn_start {
+    background-color: #2ecc71;
+    border: none;
+}
+QPushButton#btn_start:hover {
+    background-color: #27ae60;
+}
+QPushButton#btn_emergency {
+    background-color: #e74c3c;
+    border: none;
+    font-size: 14px;
+}
+QPushButton#btn_emergency:hover {
+    background-color: #c0392b;
+}
+QSlider::groove:horizontal {
+    height: 6px;
+    background: #242429;
+    border-radius: 3px;
+}
+QSlider::sub-page:horizontal {
+    background: #00d2ff;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: #ffffff;
+    width: 14px;
+    margin-top: -4px;
+    margin-bottom: -4px;
+    border-radius: 7px;
+}
+QTextEdit {
+    background-color: #0d0d0f;
+    color: #f1f2f6;
+    border: 1px solid #2c3e50;
+    border-radius: 6px;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+}
+"""
