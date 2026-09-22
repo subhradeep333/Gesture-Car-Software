@@ -29,7 +29,7 @@
 
 #define ENB_PIN 32  // PWM Speed Right Motors
 #define IN3_PIN 25  // Direction Right 1
-#define IN4_PIN 33  // Direction Right 2
+#define IN4_PIN 16  // Direction Right 2 (RX2 Pin)
 
 // ESP32 LEDC PWM Hardware Timer Settings
 #define PWM_FREQ 5000
@@ -39,5 +39,9 @@
 
 // Safety Watchdog Timer Threshold (ms)
 #define SAFETY_TIMEOUT_MS 500
+
+// Motor Acceleration Ramping Settings (Non-blocking Slew Rate Control)
+#define ACCEL_STEP_PWM 10       // Speed step increment per tick
+#define RAMP_INTERVAL_MS 5      // Smooth 5ms ramp interval (~90ms 0->180 accel)
 
 #endif // CONFIG_H

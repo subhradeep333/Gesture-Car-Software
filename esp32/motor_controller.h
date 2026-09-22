@@ -10,5 +10,6 @@ void turnLeft(uint8_t speed);
 void turnRight(uint8_t speed);
 void stopMotors();
 void emergencyStop();
+void updateMotorRamp();
 
 #endif // MOTOR_CONTROLLER_H

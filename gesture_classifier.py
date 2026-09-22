@@ -26,17 +26,14 @@ class GestureClassifier:
         dz = pt1[2] - pt2[2]
         return dx * dx + dy * dy + dz * dz
 
-    def _is_finger_curled(self, landmarks, tip_idx, pip_idx, mcp_idx, wrist_idx=0):
+    def _is_finger_curled(self, landmarks, tip_idx, mcp_idx, palm_size_sq):
         """
         Determines if a finger is curled towards the palm.
-        Returns True if tip squared distance to wrist is smaller than PIP or MCP threshold.
+        Compares tip-to-MCP squared distance against palm size squared reference (wrist to middle MCP).
+        Scale-invariant & 100% rotation-invariant across all camera angles & hand poses.
         """
-        d2_tip_wrist = self._sq_distance(landmarks[tip_idx], landmarks[wrist_idx])
-        d2_pip_wrist = self._sq_distance(landmarks[pip_idx], landmarks[wrist_idx])
-        d2_mcp_wrist = self._sq_distance(landmarks[mcp_idx], landmarks[wrist_idx])
-        
-        # Tip is folded closer to wrist than PIP or MCP (using squared ratio 1.15^2 = 1.3225)
-        return d2_tip_wrist < d2_pip_wrist or (d2_tip_wrist / d2_mcp_wrist) < 1.3225
+        d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
+        return d2_tip_mcp < (0.45 * palm_size_sq)
 
     def classify_frame(self, detected, landmarks, confidence, min_confidence=0.70):
         """
@@ -52,13 +49,17 @@ class GestureClassifier:
         thumb_tip = landmarks[4]
         index_tip = landmarks[8]
         index_mcp = landmarks[5]
+        middle_mcp = landmarks[9]
         pinky_mcp = landmarks[17]
 
-        # Fast finger curl states using squared distance calculations
-        index_curled = self._is_finger_curled(landmarks, 8, 7, 5)
-        middle_curled = self._is_finger_curled(landmarks, 12, 11, 9)
-        ring_curled = self._is_finger_curled(landmarks, 16, 15, 13)
-        pinky_curled = self._is_finger_curled(landmarks, 20, 19, 17)
+        # Calculate scale-invariant palm size squared (wrist to middle MCP)
+        palm_size_sq = self._sq_distance(wrist, middle_mcp)
+
+        # Fast finger curl states using scale-invariant palm reference
+        index_curled = self._is_finger_curled(landmarks, 8, 5, palm_size_sq)
+        middle_curled = self._is_finger_curled(landmarks, 12, 9, palm_size_sq)
+        ring_curled = self._is_finger_curled(landmarks, 16, 13, palm_size_sq)
+        pinky_curled = self._is_finger_curled(landmarks, 20, 17, palm_size_sq)
 
         # Thumb curl state (squared distance ratio: 1.2^2 = 1.44)
         d2_thumb_pinkymcp = self._sq_distance(thumb_tip, pinky_mcp)

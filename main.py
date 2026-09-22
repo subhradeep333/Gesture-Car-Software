@@ -17,7 +17,9 @@ def main():
     print(" ESP32 AI Hand Gesture Controlled IoT Car System (PySide6)")
     print("==========================================================")
 
-    # 1. Initialize PySide6 Application
+    # 1. Initialize PySide6 Application with High-DPI Scaling
+    from PySide6.QtCore import Qt
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
 
     # 2. Instantiate Core Subsystems

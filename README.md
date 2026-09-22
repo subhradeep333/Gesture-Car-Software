@@ -11,7 +11,7 @@ LAPTOP (macOS)
 ┌─────────────────────────────────────────────────────────┐
 │ Live Camera Feed (AVFoundation)                         │
 │   ↓                                                     │
-│ OpenCV & MediaPipe Hands (21 3D Landmarks)               │
+│ OpenCV & MediaPipe Hands (21 3D Landmarks)              │
 │   ↓                                                     │
 │ Gesture Classifier & Temporal Hysteresis                │
 │   ↓                                                     │
@@ -63,7 +63,7 @@ CAR (ESP32 Controller)
 | **GPIO 26** | **IN2** | Left Motors Direction 2 | Digital Output |
 | **GPIO 32** | **ENB** | Right Motors Speed | ESP32 LEDC PWM Channel 1 |
 | **GPIO 25** | **IN3** | Right Motors Direction 1 | Digital Output |
-| **GPIO 33** | **IN4** | Right Motors Direction 2 | Digital Output |
+| **GPIO 16 (RX2)** | **IN4** | Right Motors Direction 2 | Digital Output |
 | **GND** | **GND** | **COMMON GROUND** | ⚠️ Connect to Battery GND & ESP32 GND |
 | **VIN / 5V** | **5V Out** | Power Input | From L298N 5V regulator if jumper attached |
 | — | **12V In** | Battery Pack + | Connect to +7.4V to +12V battery pack |

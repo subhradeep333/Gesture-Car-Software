@@ -37,6 +37,9 @@ void loop() {
     // 1. Handle incoming WebSocket client events & messages
     loopWebSocketServer();
 
-    // 2. Check 500ms safety watchdog (auto-stops motors if signal drops)
+    // 2. Update smooth motor acceleration/deceleration ramping
+    updateMotorRamp();
+
+    // 3. Check 500ms safety watchdog (auto-stops motors if signal drops)
     checkSafetyWatchdog();
 }

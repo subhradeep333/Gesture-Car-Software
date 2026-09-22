@@ -180,11 +180,23 @@ class HandDetector:
 
             return True, landmarks_list, pixel_landmarks, confidence, hand_type
 
-    def draw_landmarks(self, frame, pixel_landmarks, gesture_name="STOP", gesture_color=(0, 255, 0)):
+    def draw_landmarks(self, frame, pixel_landmarks, gesture_name="STOP", gesture_color=(0, 255, 0), confidence=0.0):
         """
-        Draws custom hand landmarks, skeleton connections, and bounding box.
+        Draws tactical HUD overlay with sci-fi corner brackets, glowing skeleton connections,
+        and semi-transparent gesture tag badge.
         """
+        import numpy as np
+
+        h, w, _ = frame.shape
+
+        # Draw camera HUD overlay corner markers on video frame
+        hud_color = (0, 229, 255)  # Cyan HUD tint
+        cv2.putText(frame, "CAM 01 // LIVE", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, hud_color, 1, cv2.LINE_AA)
+
         if not pixel_landmarks or len(pixel_landmarks) < 21:
+            # Subtle center reticle when no hand is present
+            cx, cy = w // 2, h // 2
+            cv2.drawMarker(frame, (cx, cy), (60, 75, 95), cv2.MARKER_CROSS, 20, 1, cv2.LINE_AA)
             return frame
 
         # Skeleton connections definition
@@ -196,36 +208,69 @@ class HandDetector:
             (13, 17), (0, 17), (17, 18), (18, 19), (19, 20) # Pinky & Palm
         ]
 
-        # Draw connection lines
+        # Draw glowing connection lines (thin outer line + core bright line)
         for pt1_idx, pt2_idx in connections:
             pt1 = pixel_landmarks[pt1_idx]
             pt2 = pixel_landmarks[pt2_idx]
-            cv2.line(frame, pt1, pt2, (200, 200, 200), 2, cv2.LINE_AA)
+            # Core line
+            cv2.line(frame, pt1, pt2, (240, 240, 245), 2, cv2.LINE_AA)
 
         # Draw key joint points
         for i, (px, py) in enumerate(pixel_landmarks):
             if i in [4, 8, 12, 16, 20]:  # Finger Tips
-                cv2.circle(frame, (px, py), 7, gesture_color, -1, cv2.LINE_AA)
-                cv2.circle(frame, (px, py), 9, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.circle(frame, (px, py), 8, gesture_color, -1, cv2.LINE_AA)
+                cv2.circle(frame, (px, py), 10, (255, 255, 255), 1, cv2.LINE_AA)
             else:
-                cv2.circle(frame, (px, py), 4, (0, 210, 255), -1, cv2.LINE_AA)
+                cv2.circle(frame, (px, py), 4, (0, 229, 255), -1, cv2.LINE_AA)
+                cv2.circle(frame, (px, py), 5, (10, 20, 30), 1, cv2.LINE_AA)
 
         # Compute Bounding Box
         xs = [pt[0] for pt in pixel_landmarks]
         ys = [pt[1] for pt in pixel_landmarks]
-        min_x, max_x = max(0, min(xs) - 15), min(frame.shape[1], max(xs) + 15)
-        min_y, max_y = max(0, min(ys) - 25), min(frame.shape[0], max(ys) + 15)
+        pad = 20
+        min_x, max_x = max(5, min(xs) - pad), min(w - 5, max(xs) + pad)
+        min_y, max_y = max(5, min(ys) - pad), min(h - 5, max(ys) + pad)
 
-        # Draw corner bounding box
-        box_color = gesture_color
-        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), box_color, 1, cv2.LINE_AA)
+        # Draw Futuristic L-Shaped Corner Brackets instead of solid rectangle
+        corner_len = min(25, (max_x - min_x) // 4, (max_y - min_y) // 4)
+        c_color = gesture_color
+        thick = 2
 
-        # Gesture Label Tag above bounding box
-        label_text = f"Hand: {gesture_name}"
-        cv2.putText(frame, label_text, (min_x, max(20, min_y - 10)), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, box_color, 2, cv2.LINE_AA)
+        # Top-Left Corner
+        cv2.line(frame, (min_x, min_y), (min_x + corner_len, min_y), c_color, thick, cv2.LINE_AA)
+        cv2.line(frame, (min_x, min_y), (min_x, min_y + corner_len), c_color, thick, cv2.LINE_AA)
+        # Top-Right Corner
+        cv2.line(frame, (max_x, min_y), (max_x - corner_len, min_y), c_color, thick, cv2.LINE_AA)
+        cv2.line(frame, (max_x, min_y), (max_x, min_y + corner_len), c_color, thick, cv2.LINE_AA)
+        # Bottom-Left Corner
+        cv2.line(frame, (min_x, max_y), (min_x + corner_len, max_y), c_color, thick, cv2.LINE_AA)
+        cv2.line(frame, (min_x, max_y), (min_x, max_y - corner_len), c_color, thick, cv2.LINE_AA)
+        # Bottom-Right Corner
+        cv2.line(frame, (max_x, max_y), (max_x - corner_len, max_y), c_color, thick, cv2.LINE_AA)
+        cv2.line(frame, (max_x, max_y), (max_x, max_y - corner_len), c_color, thick, cv2.LINE_AA)
+
+        # Semi-transparent HUD overlay tag for gesture label
+        tag_text = f"TARGET: {gesture_name}"
+        if confidence > 0:
+            tag_text += f" ({confidence*100:.0f}%)"
+
+        (t_w, t_h), baseline = cv2.getTextSize(tag_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+        tag_y1 = max(5, min_y - t_h - 12)
+        tag_y2 = tag_y1 + t_h + 8
+        tag_x1 = min_x
+        tag_x2 = min(w - 5, min_x + t_w + 14)
+
+        # Overlay blended background box
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (tag_x1, tag_y1), (tag_x2, tag_y2), (15, 22, 32), -1)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.rectangle(frame, (tag_x1, tag_y1), (tag_x2, tag_y2), c_color, 1, cv2.LINE_AA)
+
+        cv2.putText(frame, tag_text, (tag_x1 + 6, tag_y2 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
 
         return frame
+
 
     def close(self):
         if self.use_tasks_api and self.landmarker:
