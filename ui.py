@@ -94,30 +94,30 @@ class RadarWidget(QWidget):
             pt_x = center_x + r_pt * math.cos(rad)
             pt_y = center_y - r_pt * math.sin(rad)
 
-            # Color coding based on obstacle distance Proximity
-            if d < 20.0:
-                col = QColor(239, 68, 68, int(255 * alpha))   # Red (Critical)
-            elif d < 50.0:
-                col = QColor(245, 158, 11, int(255 * alpha))  # Amber (Warning)
+            # Color coding based on obstacle distance Proximity (10cm = Very Close Stop)
+            if d <= 10.0:
+                col = QColor(239, 68, 68, int(255 * alpha))   # Red (Critical <= 10cm)
+            elif d <= 25.0:
+                col = QColor(245, 158, 11, int(255 * alpha))  # Amber (Warning <= 25cm)
             else:
-                col = QColor(16, 185, 129, int(255 * alpha))  # Green (Clear)
+                col = QColor(16, 185, 129, int(255 * alpha))  # Green (Clear > 25cm)
 
             painter.setBrush(QBrush(col))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPointF(pt_x, pt_y), 6, 6)
 
-            # Draw explicit distance text label right next to the obstacle point if < 80cm
-            if d < 80.0 and age < 2.0:
+            # Draw explicit distance text label right next to the obstacle point if <= 50cm
+            if d <= 50.0 and age < 2.0:
                 painter.setPen(col)
                 painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
                 painter.drawText(int(pt_x + 8), int(pt_y - 2), f"{d:.0f}cm")
 
         # Top Overlay Readout Banner for Detected Object Distance
         painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        if self.current_distance < 20.0:
+        if self.current_distance <= 10.0:
             painter.setPen(QColor("#EF4444"))
-            readout = f"🚨 OBJECT DETECTED VERY CLOSE: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
-        elif self.current_distance < 50.0:
+            readout = f"🚨 OBJECT VERY CLOSE (10cm STOP): {self.current_distance:.1f} cm (@ {self.current_angle}°)"
+        elif self.current_distance <= 25.0:
             painter.setPen(QColor("#F59E0B"))
             readout = f"⚠️ OBSTACLE SENSED: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
         else:

@@ -57,7 +57,7 @@
 #define SERVO_STEP_INTERVAL_MS 20  // Non-blocking servo update tick (ms)
 
 #define ULTRASONIC_MAX_RANGE_CM 200.0f  // Maximum valid sensing range (cm)
-#define OBSTACLE_VERY_CLOSE_CM 20.0f    // Emergency stop / collision threshold (cm)
-#define OBSTACLE_WARNING_CM 50.0f       // Caution threshold (cm)
+#define OBSTACLE_VERY_CLOSE_CM 10.0f    // Emergency stop / collision threshold (10cm)
+#define OBSTACLE_WARNING_CM 25.0f       // Caution threshold (25cm)
 
 #endif // CONFIG_H
