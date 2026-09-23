@@ -26,18 +26,28 @@ class GestureClassifier:
         dz = pt1[2] - pt2[2]
         return dx * dx + dy * dy + dz * dz
 
-    def _is_finger_curled(self, landmarks, tip_idx, mcp_idx, palm_size_sq):
+    def _is_finger_extended(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
         """
-        Determines if a finger is curled towards the palm.
-        Compares tip-to-MCP squared distance against palm size squared reference (wrist to middle MCP).
-        Scale-invariant & 100% rotation-invariant across all camera angles & hand poses.
+        Determines if a finger is extended using MCP-relative joint distance ratio:
+        Scale-invariant & 100% direction-independent across all pointing angles (UP, DOWN, LEFT, RIGHT).
         """
         d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
-        return d2_tip_mcp < (0.45 * palm_size_sq)
+        d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
+
+        return (d2_tip_mcp > 1.2 * d2_pip_mcp) and (d2_tip_mcp > 0.35 * palm_size_sq)
+
+    def _is_finger_curled(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
+        """
+        Determines if a finger is curled towards the palm using MCP-relative joint distance ratio.
+        """
+        d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
+        d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
+
+        return (d2_tip_mcp <= 1.2 * d2_pip_mcp) or (d2_tip_mcp <= 0.42 * palm_size_sq)
 
     def classify_frame(self, detected, landmarks, confidence, min_confidence=0.70):
         """
-        Classifies single frame landmarks into raw candidate gesture command.
+        Classifies single frame landmarks into raw candidate gesture command with high precision.
         """
         if not detected or len(landmarks) < 21:
             return "NONE"
@@ -55,29 +65,29 @@ class GestureClassifier:
         # Calculate scale-invariant palm size squared (wrist to middle MCP)
         palm_size_sq = self._sq_distance(wrist, middle_mcp)
 
-        # Fast finger curl states using scale-invariant palm reference
-        index_curled = self._is_finger_curled(landmarks, 8, 5, palm_size_sq)
-        middle_curled = self._is_finger_curled(landmarks, 12, 9, palm_size_sq)
-        ring_curled = self._is_finger_curled(landmarks, 16, 13, palm_size_sq)
-        pinky_curled = self._is_finger_curled(landmarks, 20, 17, palm_size_sq)
+        # Precise finger state evaluation using scale-invariant MCP-relative joint distance ratios
+        index_ext = self._is_finger_extended(landmarks, 8, 6, 5, palm_size_sq)
+        middle_ext = self._is_finger_extended(landmarks, 12, 10, 9, palm_size_sq)
+        ring_ext = self._is_finger_extended(landmarks, 16, 14, 13, palm_size_sq)
+        pinky_ext = self._is_finger_extended(landmarks, 20, 18, 17, palm_size_sq)
 
-        # Thumb curl state (squared distance ratio: 1.2^2 = 1.44)
-        d2_thumb_pinkymcp = self._sq_distance(thumb_tip, pinky_mcp)
-        d2_indexmcp_pinkymcp = self._sq_distance(index_mcp, pinky_mcp)
-        thumb_curled = d2_thumb_pinkymcp < (1.44 * d2_indexmcp_pinkymcp)
+        index_curled = self._is_finger_curled(landmarks, 8, 6, 5, palm_size_sq)
+        middle_curled = self._is_finger_curled(landmarks, 12, 10, 9, palm_size_sq)
+        ring_curled = self._is_finger_curled(landmarks, 16, 14, 13, palm_size_sq)
+        pinky_curled = self._is_finger_curled(landmarks, 20, 18, 17, palm_size_sq)
 
         # 1. FIST (Emergency Stop - E)
         if index_curled and middle_curled and ring_curled and pinky_curled:
             return config.CMD_EMERGENCY_STOP
 
         # 2. OPEN PALM (Stop - S)
-        if not index_curled and not middle_curled and not ring_curled and not pinky_curled:
+        if index_ext and middle_ext and ring_ext and pinky_ext:
             return config.CMD_STOP
 
         # 3. SINGLE INDEX FINGER EXTENDED (FORWARD, BACKWARD, LEFT, RIGHT)
-        # Index must NOT be curled, while Middle, Ring, Pinky MUST be curled
-        if not index_curled and middle_curled and ring_curled and pinky_curled:
-            # Direction vector of index finger relative to MCP base
+        # Index MUST be extended while Middle, Ring, Pinky MUST be curled
+        if index_ext and middle_curled and ring_curled and pinky_curled:
+            # Vector from index MCP to index tip
             dx = index_tip[0] - index_mcp[0]
             dy = index_tip[1] - index_mcp[1]  # Note: y is inverted in image coordinates (0 at top)
 
