@@ -5,5 +5,6 @@
 
 void setupWebSocketServer();
 void loopWebSocketServer();
+void checkAutonomousObstacleAvoidance();
 
 #endif // WEBSOCKET_SERVER_H

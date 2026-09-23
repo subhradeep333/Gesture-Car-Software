@@ -47,6 +47,9 @@ void loop() {
     // 3. Continuously sweep SG90 servo & sample HC-SR04 ultrasonic distance
     scanEnvironment();
 
-    // 4. Check 500ms safety watchdog (auto-stops motors if signal drops)
+    // 4. Real-time Autonomous Route Diversion if an obstacle suddenly appears while driving
+    checkAutonomousObstacleAvoidance();
+
+    // 5. Check 500ms safety watchdog (auto-stops motors if signal drops)
     checkSafetyWatchdog();
 }

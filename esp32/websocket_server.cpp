@@ -67,9 +67,18 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             switch (cmd) {
                 case 'F':
                     if (isFrontBlocked()) {
-                        stopMotors();
-                        current_active_cmd = 'S';
-                        sendTelemetry(num, "FRONT_OBSTACLE_STOP");
+                        RadarData radar = getRadarData();
+                        if (strcmp(radar.best_path, "LEFT") == 0) {
+                            turnLeft(speed);
+                            current_active_cmd = 'L';
+                        } else if (strcmp(radar.best_path, "RIGHT") == 0) {
+                            turnRight(speed);
+                            current_active_cmd = 'R';
+                        } else {
+                            moveBackward(speed);
+                            current_active_cmd = 'B';
+                        }
+                        sendTelemetry(num, "OBSTACLE_DIVERTED");
                         return;
                     } else {
                         moveForward(speed);
@@ -102,6 +111,29 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
         default:
             break;
+    }
+}
+
+void checkAutonomousObstacleAvoidance() {
+    // If car is currently driving FORWARD ('F') and an obstacle suddenly appears in front (< 20cm)
+    if (current_active_cmd == 'F' && isFrontBlocked()) {
+        RadarData radar = getRadarData();
+
+        if (strcmp(radar.best_path, "LEFT") == 0) {
+            turnLeft(180);
+            current_active_cmd = 'L';
+            Serial.println("[AUTO-AVOID] Obstacle detected! Diverting route to LEFT");
+        } else if (strcmp(radar.best_path, "RIGHT") == 0) {
+            turnRight(180);
+            current_active_cmd = 'R';
+            Serial.println("[AUTO-AVOID] Obstacle detected! Diverting route to RIGHT");
+        } else {
+            moveBackward(180);
+            current_active_cmd = 'B';
+            Serial.println("[AUTO-AVOID] Obstacle detected! Reversing to clear space");
+        }
+
+        sendTelemetry(0, "AUTONOMOUS_ROUTE_DIVERT");
     }
 }
 
