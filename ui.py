@@ -81,7 +81,7 @@ class RadarWidget(QWidget):
             painter.drawText(int(x_lbl), int(y_lbl), f"{a}°")
             painter.setPen(pen_line)
 
-        # Draw historical obstacle detection points
+        # Draw historical obstacle detection points with distance tags
         now = time.time()
         for a, d, t in self.obstacle_points:
             if d >= self.max_range:
@@ -96,15 +96,34 @@ class RadarWidget(QWidget):
 
             # Color coding based on obstacle distance Proximity
             if d < 20.0:
-                col = QColor(239, 68, 68, int(255 * alpha))   # Red
+                col = QColor(239, 68, 68, int(255 * alpha))   # Red (Critical)
             elif d < 50.0:
-                col = QColor(245, 158, 11, int(255 * alpha))  # Amber
+                col = QColor(245, 158, 11, int(255 * alpha))  # Amber (Warning)
             else:
-                col = QColor(16, 185, 129, int(255 * alpha))  # Green
+                col = QColor(16, 185, 129, int(255 * alpha))  # Green (Clear)
 
             painter.setBrush(QBrush(col))
             painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPointF(pt_x, pt_y), 5, 5)
+            painter.drawEllipse(QPointF(pt_x, pt_y), 6, 6)
+
+            # Draw explicit distance text label right next to the obstacle point if < 80cm
+            if d < 80.0 and age < 2.0:
+                painter.setPen(col)
+                painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                painter.drawText(int(pt_x + 8), int(pt_y - 2), f"{d:.0f}cm")
+
+        # Top Overlay Readout Banner for Detected Object Distance
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        if self.current_distance < 20.0:
+            painter.setPen(QColor("#EF4444"))
+            readout = f"🚨 OBJECT DETECTED VERY CLOSE: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
+        elif self.current_distance < 50.0:
+            painter.setPen(QColor("#F59E0B"))
+            readout = f"⚠️ OBSTACLE SENSED: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
+        else:
+            painter.setPen(QColor("#10B981"))
+            readout = f"🟢 DISTANCE: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
+        painter.drawText(15, 22, readout)
 
         # Sweeping Radial Beam Line tracking current Servo Angle
         beam_rad = math.radians(180 - self.current_angle)
