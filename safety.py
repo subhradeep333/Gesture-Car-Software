@@ -13,7 +13,10 @@ class SafetyManager:
     def set_system_active(self, active):
         """Activates or pauses system gesture processing."""
         self.system_active = active
-        if not active:
+        if active:
+            self.emergency_override = False  # Clear stale GUI emergency overrides on start
+            self.last_fault_reason = "System Active"
+        else:
             self.last_fault_reason = "System Paused by User"
 
     def trigger_emergency_stop(self):
@@ -31,13 +34,13 @@ class SafetyManager:
         Evaluates system safety rules in order of priority.
         Returns (target_command, safety_ok, fault_reason).
         """
-        # Rule 1: Emergency GUI Override
-        if self.emergency_override:
-            return config.CMD_EMERGENCY_STOP, False, "GUI Emergency Stop Override"
-
-        # Rule 2: System Inactive / Paused
+        # Rule 1: System Inactive / Paused (Forces smooth STOP)
         if not self.system_active:
             return config.CMD_STOP, False, "System Paused"
+
+        # Rule 2: Emergency GUI Override
+        if self.emergency_override:
+            return config.CMD_EMERGENCY_STOP, False, "GUI Emergency Stop Override"
 
         # Rule 3: Camera Feed Disconnected or Frame Failure
         if not camera_ok:

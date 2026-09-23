@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
         self.btn_start.setObjectName("btn_start")
         self.btn_start.setMinimumHeight(44)
         self.btn_start.setCursor(Qt.PointingHandCursor)
+        self.btn_start.setFocusPolicy(Qt.NoFocus)
         self.btn_start.clicked.connect(self._toggle_system_active)
         actions_layout.addWidget(self.btn_start, stretch=1)
 
@@ -288,6 +289,7 @@ class MainWindow(QMainWindow):
         self.btn_emergency.setObjectName("btn_emergency")
         self.btn_emergency.setMinimumHeight(44)
         self.btn_emergency.setCursor(Qt.PointingHandCursor)
+        self.btn_emergency.setFocusPolicy(Qt.NoFocus)
         self.btn_emergency.clicked.connect(self._toggle_emergency_stop)
         actions_layout.addWidget(self.btn_emergency, stretch=1)
 
@@ -632,6 +634,7 @@ class MainWindow(QMainWindow):
             self.btn_start.setText("⏸ PAUSE SYSTEM")
             self.btn_start.setObjectName("btn_pause")
             self.btn_start.setStyleSheet("")  # Apply QSS rule
+            self.btn_emergency.setText("🚨 EMERGENCY STOP 🚨")
             self.lbl_system_badge.setText("● SYSTEM ACTIVE")
             self.lbl_system_badge.setStyleSheet(
                 "background-color: #162B22; color: #10B981; border: 1px solid #059669; "
