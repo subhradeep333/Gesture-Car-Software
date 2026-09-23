@@ -111,28 +111,42 @@ void scanEnvironment() {
     }
     last_servo_update = now;
 
-    // Smooth servo angle step
-    current_angle += (sweep_direction * SERVO_SWEEP_STEP_DEG);
-    if (current_angle >= SERVO_MAX_ANGLE) {
-        current_angle = SERVO_MAX_ANGLE;
-        sweep_direction = -1;
-    } else if (current_angle <= SERVO_MIN_ANGLE) {
-        current_angle = SERVO_MIN_ANGLE;
-        sweep_direction = 1;
-    }
-
-    updateServo(current_angle);
-
     // Read distance at current angle
     current_dist = readDistance();
 
-    // Store sector distance memory
-    if (current_angle >= 110) {
-        left_dist = (0.6f * current_dist) + (0.4f * left_dist);
-    } else if (current_angle <= 70) {
-        right_dist = (0.6f * current_dist) + (0.4f * right_dist);
+    // Determine if front path is clear vs obstructed (< 50cm)
+    bool obstacle_sensed = (center_dist < OBSTACLE_WARNING_CM || current_dist < OBSTACLE_WARNING_CM);
+
+    if (!obstacle_sensed) {
+        // Path is CLEAR: Servo stays parked facing straight ahead (90 deg)
+        if (current_angle != 90) {
+            if (current_angle < 90) current_angle = min(90, current_angle + SERVO_SWEEP_STEP_DEG);
+            else if (current_angle > 90) current_angle = max(90, current_angle - SERVO_SWEEP_STEP_DEG);
+            updateServo(current_angle);
+        }
+        center_dist = current_dist;
+        left_dist = ULTRASONIC_MAX_RANGE_CM;
+        right_dist = ULTRASONIC_MAX_RANGE_CM;
     } else {
-        center_dist = (0.6f * current_dist) + (0.4f * center_dist);
+        // OBSTACLE SENSED (< 50cm): Automatically activate Servo Radar Sweep (30° -> 150° -> 30°)
+        current_angle += (sweep_direction * SERVO_SWEEP_STEP_DEG);
+        if (current_angle >= SERVO_MAX_ANGLE) {
+            current_angle = SERVO_MAX_ANGLE;
+            sweep_direction = -1;
+        } else if (current_angle <= SERVO_MIN_ANGLE) {
+            current_angle = SERVO_MIN_ANGLE;
+            sweep_direction = 1;
+        }
+        updateServo(current_angle);
+
+        // Store sector distance memory
+        if (current_angle >= 110) {
+            left_dist = (0.6f * current_dist) + (0.4f * left_dist);
+        } else if (current_angle <= 70) {
+            right_dist = (0.6f * current_dist) + (0.4f * right_dist);
+        } else {
+            center_dist = (0.6f * current_dist) + (0.4f * center_dist);
+        }
     }
 
     detectObstacle();
