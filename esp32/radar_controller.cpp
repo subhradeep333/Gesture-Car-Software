@@ -36,7 +36,7 @@ void updateServo(int angle) {
 
 void initRadar() {
     pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
+    pinMode(ECHO_PIN, INPUT_PULLDOWN);
     digitalWrite(TRIG_PIN, LOW);
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
@@ -53,26 +53,29 @@ void initRadar() {
 }
 
 float readDistance() {
-    // Trigger 10us ultrasonic pulse on HC-SR04
+    // Ensure clean LOW state before trigger pulse
     digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
+    delayMicroseconds(4);
+
+    // Trigger 10us ultrasonic pulse on HC-SR04
     digitalWrite(TRIG_PIN, HIGH);
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
 
-    // Measure echo pulse width (timeout 15ms ~ 250cm max)
-    unsigned long duration = pulseIn(ECHO_PIN, HIGH, 15000);
+    // Measure echo pulse width (timeout 25ms ~ 400cm max)
+    unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000);
     if (duration == 0) {
+        filtered_dist = (0.7f * ULTRASONIC_MAX_RANGE_CM) + (0.3f * filtered_dist);
         return ULTRASONIC_MAX_RANGE_CM;  // No reflection -> Clear range
     }
 
     float raw_cm = (float)duration * 0.0343f / 2.0f;
     if (raw_cm < 2.0f || raw_cm > ULTRASONIC_MAX_RANGE_CM) {
-        return ULTRASONIC_MAX_RANGE_CM;
+        raw_cm = ULTRASONIC_MAX_RANGE_CM;
     }
 
-    // Single-pass exponential smoothing filter for noise rejection
-    filtered_dist = (0.75f * raw_cm) + (0.25f * filtered_dist);
+    // Exponential moving average filter for noise rejection
+    filtered_dist = (0.7f * raw_cm) + (0.3f * filtered_dist);
     return filtered_dist;
 }
 
