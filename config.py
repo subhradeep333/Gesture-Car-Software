@@ -53,6 +53,10 @@ GESTURE_METADATA = {
     "NONE": ("NO HAND DETECTED", "🚫", "#95a5a6")      # Muted Gray
 }
 
+# Radar Obstacle Distance Thresholds (cm)
+OBSTACLE_VERY_CLOSE_CM = 10.0    # Collision / Emergency Stop Threshold (10cm)
+OBSTACLE_WARNING_CM = 25.0       # Cautionary Sector Sweep Threshold (25cm)
+
 # Radar Obstacle Status Metadata: (Display Name, Icon, Hex Color)
 RADAR_STATUS_METADATA = {
     "CLEAR": ("CLEAR", "🟢", "#10B981"),               # Emerald Green
