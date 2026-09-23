@@ -37,11 +37,20 @@
 #define PWM_CHANNEL_ENA 0
 #define PWM_CHANNEL_ENB 1
 
-// Safety Watchdog Timer Threshold (ms)
-#define SAFETY_TIMEOUT_MS 500
+// SG90 Servo & HC-SR04 Ultrasonic Radar Hardware Pinout
+#define SERVO_PIN 13       // SG90 Servo Signal Pin
+#define TRIG_PIN 5         // HC-SR04 Ultrasonic Trigger Pin
+#define ECHO_PIN 18        // HC-SR04 Ultrasonic Echo Pin
+#define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
 
-// Motor Acceleration Ramping Settings (Non-blocking Slew Rate Control)
-#define ACCEL_STEP_PWM 10       // Speed step increment per tick
-#define RAMP_INTERVAL_MS 5      // Smooth 5ms ramp interval (~90ms 0->180 accel)
+// Radar & Obstacle Avoidance Configuration Parameters
+#define SERVO_MIN_ANGLE 30         // Leftmost scan angle (degrees)
+#define SERVO_MAX_ANGLE 150        // Rightmost scan angle (degrees)
+#define SERVO_SWEEP_STEP_DEG 2     // Angle increment per sweep step
+#define SERVO_STEP_INTERVAL_MS 20  // Non-blocking servo update tick (ms)
+
+#define ULTRASONIC_MAX_RANGE_CM 200.0f  // Maximum valid sensing range (cm)
+#define OBSTACLE_VERY_CLOSE_CM 20.0f    // Emergency stop / collision threshold (cm)
+#define OBSTACLE_WARNING_CM 50.0f       // Caution threshold (cm)
 
 #endif // CONFIG_H

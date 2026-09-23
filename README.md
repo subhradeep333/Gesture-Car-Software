@@ -54,18 +54,21 @@ CAR (ESP32 Controller)
 
 ---
 
-## 🔌 ESP32 to L298N Wiring & Pin Mapping
+## 🔌 ESP32 Hardware Wiring & Pin Mapping
 
-| ESP32 Pin | L298N Module Pin | Function | Notes |
+| ESP32 Pin | Component / Module Pin | Function | Notes |
 | :--- | :--- | :--- | :--- |
-| **GPIO 14** | **ENA** | Left Motors Speed | ESP32 LEDC PWM Channel 0 |
-| **GPIO 27** | **IN1** | Left Motors Direction 1 | Digital Output |
-| **GPIO 26** | **IN2** | Left Motors Direction 2 | Digital Output |
-| **GPIO 32** | **ENB** | Right Motors Speed | ESP32 LEDC PWM Channel 1 |
-| **GPIO 25** | **IN3** | Right Motors Direction 1 | Digital Output |
-| **GPIO 16 (RX2)** | **IN4** | Right Motors Direction 2 | Digital Output |
+| **GPIO 14** | **L298N ENA** | Left Motors Speed | ESP32 LEDC PWM Channel 0 |
+| **GPIO 27** | **L298N IN1** | Left Motors Direction 1 | Digital Output |
+| **GPIO 26** | **L298N IN2** | Left Motors Direction 2 | Digital Output |
+| **GPIO 32** | **L298N ENB** | Right Motors Speed | ESP32 LEDC PWM Channel 1 |
+| **GPIO 25** | **L298N IN3** | Right Motors Direction 1 | Digital Output |
+| **GPIO 16 (RX2)** | **L298N IN4** | Right Motors Direction 2 | Digital Output |
+| **GPIO 13** | **SG90 Servo Signal** | Radar Sweeping Motor | ESP32 LEDC PWM Channel 2 (50Hz) |
+| **GPIO 5** | **HC-SR04 TRIG** | Ultrasonic Trigger | 10µs Pulse Output |
+| **GPIO 18** | **HC-SR04 ECHO** | Ultrasonic Echo | Pulse Width Input |
 | **GND** | **GND** | **COMMON GROUND** | ⚠️ Connect to Battery GND & ESP32 GND |
-| **VIN / 5V** | **5V Out** | Power Input | From L298N 5V regulator if jumper attached |
+| **VIN / 5V** | **5V Out / VCC** | Power Input | Servo & Sensor 5V VCC |
 | — | **12V In** | Battery Pack + | Connect to +7.4V to +12V battery pack |
 
 ---
@@ -82,12 +85,14 @@ gesture-car/
 ├── safety.py                  # Safety rules engine (camera, confidence, GUI overrides)
 ├── car_controller.py          # Command state machine, deduplication, & heartbeat timer
 ├── websocket_manager.py       # Async WebSocket client manager & Qt signal serializer
-├── ui.py                      # Modern PySide6 Qt6 desktop GUI dashboard
+├── ui.py                      # Modern PySide6 Qt6 desktop GUI dashboard (with Radar Scope)
 ├── requirements.txt           # Python dependencies
 │
 └── esp32/
-    ├── main.ino               # Main ESP32 Arduino sketch
+    ├── esp32.ino              # Main ESP32 Arduino sketch
     ├── config.h               # GPIO pin assignments, AP credentials, safety thresholds
+    ├── radar_controller.h     # SG90 Servo & HC-SR04 Ultrasonic Radar module header
+    ├── radar_controller.cpp   # Non-blocking 30°-150° sweep & obstacle distance engine
     ├── wifi_manager.h         # Wi-Fi SoftAP controller header
     ├── wifi_manager.cpp       # SoftAP initialization implementation
     ├── websocket_server.h     # WebSocket server header
@@ -96,6 +101,7 @@ gesture-car/
     ├── motor_controller.cpp   # Motor direction & ESP32 LEDC PWM implementation
     ├── safety_controller.h    # 500ms Hardware Watchdog timer header
     └── safety_controller.cpp  # Watchdog auto-stop implementation
+```
 ```
 
 ---

@@ -53,6 +53,13 @@ GESTURE_METADATA = {
     "NONE": ("NO HAND DETECTED", "🚫", "#95a5a6")      # Muted Gray
 }
 
+# Radar Obstacle Status Metadata: (Display Name, Icon, Hex Color)
+RADAR_STATUS_METADATA = {
+    "CLEAR": ("CLEAR", "🟢", "#10B981"),               # Emerald Green
+    "OBSTACLE DETECTED": ("OBSTACLE", "⚠️", "#F59E0B"), # Amber
+    "VERY CLOSE": ("VERY CLOSE", "🚨", "#EF4444")       # Red
+}
+
 # Dark Modern PySide6 Styling Palette
 QSS_DARK_THEME = """
 QMainWindow {

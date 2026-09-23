@@ -2,6 +2,7 @@
 #include "config.h"
 #include "motor_controller.h"
 #include "safety_controller.h"
+#include "radar_controller.h"
 #include <WebSocketsServer.h>
 #include <ArduinoJson.h>
 
@@ -9,10 +10,20 @@ WebSocketsServer webSocket = WebSocketsServer(WEBSOCKET_PORT);
 static char current_active_cmd = 'S';
 
 void sendTelemetry(uint8_t num, const char* status_str) {
-    StaticJsonDocument<128> doc;
+    StaticJsonDocument<384> doc;
     doc["status"] = status_str;
     doc["command"] = String(current_active_cmd);
     doc["battery"] = 85;  // Simulated battery level percentage
+
+    RadarData radar = getRadarData();
+    JsonObject r = doc.createNestedObject("radar");
+    r["angle"] = radar.angle;
+    r["distance"] = (int)radar.distance;
+    r["left_dist"] = (int)radar.left_dist;
+    r["center_dist"] = (int)radar.center_dist;
+    r["right_dist"] = (int)radar.right_dist;
+    r["status"] = radar.status;
+    r["best_path"] = radar.best_path;
 
     String response;
     serializeJson(doc, response);
@@ -55,7 +66,14 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             // Execute Motor Control Actions
             switch (cmd) {
                 case 'F':
-                    moveForward(speed);
+                    if (isFrontBlocked()) {
+                        stopMotors();
+                        current_active_cmd = 'S';
+                        sendTelemetry(num, "FRONT_OBSTACLE_STOP");
+                        return;
+                    } else {
+                        moveForward(speed);
+                    }
                     break;
                 case 'B':
                     moveBackward(speed);

@@ -15,6 +15,7 @@ class WebSocketManager(QObject):
     # PySide6 Qt Signals for thread-safe UI updates
     connection_status_changed = Signal(bool, str)  # (is_connected, status_text)
     telemetry_received = Signal(dict)               # Parsed JSON telemetry from ESP32
+    radar_telemetry_received = Signal(dict)         # Parsed Ultrasonic Radar data from ESP32
     log_emitted = Signal(str, str)                  # (tag, message)
 
     def __init__(self, ws_url=config.WS_URL):
@@ -97,6 +98,8 @@ class WebSocketManager(QObject):
             try:
                 data = json.loads(message)
                 self.telemetry_received.emit(data)
+                if "radar" in data and isinstance(data["radar"], dict):
+                    self.radar_telemetry_received.emit(data["radar"])
                 self.log_emitted.emit("RX", message)
             except json.JSONDecodeError:
                 self.log_emitted.emit("RX_RAW", message)

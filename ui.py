@@ -2,16 +2,122 @@
 Modern PySide6 (Qt6) Desktop Command Dashboard for ESP32 AI Hand Gesture Controlled IoT Car.
 """
 
+import math
 import time
 import cv2
-from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtGui import QImage, QPixmap, QFont
+from PySide6.QtCore import Qt, QTimer, Slot, QPointF, QRectF
+from PySide6.QtGui import QImage, QPixmap, QFont, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QSlider, QTextEdit,
     QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QTabWidget,
     QProgressBar, QComboBox, QLineEdit, QCheckBox
 )
 import config
+
+class RadarWidget(QWidget):
+    """
+    Custom 60 FPS Sci-Fi Polar Radar Scope (30° to 150°) for SG90 Servo & HC-SR04 Scanner.
+    Draws distance rings, sweep ray, and color-coded obstacle points.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(320, 240)
+        self.current_angle = 90
+        self.current_distance = 200.0
+        self.max_range = 200.0
+        self.obstacle_points = []  # List of tuples: (angle, distance, timestamp)
+
+    def update_radar(self, angle, distance):
+        self.current_angle = angle
+        self.current_distance = distance
+        now = time.time()
+        self.obstacle_points.append((angle, distance, now))
+        # Keep recent points (fade after 4 seconds)
+        self.obstacle_points = [p for p in self.obstacle_points if (now - p[2]) < 4.0]
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        w, h = self.width(), self.height()
+        center_x = w / 2.0
+        center_y = h - 25.0
+        radius = min(w / 2.2, h - 45.0)
+
+        # Background Fill
+        painter.fillRect(self.rect(), QColor("#080B10"))
+
+        # Concentric distance rings: 50cm, 100cm, 150cm, 200cm
+        pen_grid = QPen(QColor("#1E2736"), 1, Qt.DashLine)
+        painter.setPen(pen_grid)
+
+        for r_ratio in [0.25, 0.5, 0.75, 1.0]:
+            r_curr = radius * r_ratio
+            rect = QRectF(center_x - r_curr, center_y - r_curr, r_curr * 2, r_curr * 2)
+            painter.drawArc(rect, 30 * 16, 120 * 16)
+            
+            # Distance text labels
+            dist_val = int(r_ratio * self.max_range)
+            painter.setPen(QColor("#64748B"))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            painter.drawText(int(center_x + 5), int(center_y - r_curr + 12), f"{dist_val}cm")
+            painter.setPen(pen_grid)
+
+        # Radiating angle lines: 30°, 60°, 90°, 120°, 150°
+        angles = [30, 60, 90, 120, 150]
+        pen_line = QPen(QColor("#2A364D"), 1, Qt.SolidLine)
+        painter.setPen(pen_line)
+        for a in angles:
+            rad = math.radians(180 - a)
+            x_end = center_x + radius * math.cos(rad)
+            y_end = center_y - radius * math.sin(rad)
+            painter.drawLine(QPointF(center_x, center_y), QPointF(x_end, y_end))
+
+            # Angle text labels
+            x_lbl = center_x + (radius + 15) * math.cos(rad) - 10
+            y_lbl = center_y - (radius + 15) * math.sin(rad) + 4
+            painter.setPen(QColor("#00E5FF"))
+            painter.drawText(int(x_lbl), int(y_lbl), f"{a}°")
+            painter.setPen(pen_line)
+
+        # Draw historical obstacle detection points
+        now = time.time()
+        for a, d, t in self.obstacle_points:
+            if d >= self.max_range:
+                continue
+            age = now - t
+            alpha = max(0.1, 1.0 - (age / 4.0))
+
+            rad = math.radians(180 - a)
+            r_pt = (d / self.max_range) * radius
+            pt_x = center_x + r_pt * math.cos(rad)
+            pt_y = center_y - r_pt * math.sin(rad)
+
+            # Color coding based on obstacle distance Proximity
+            if d < 20.0:
+                col = QColor(239, 68, 68, int(255 * alpha))   # Red
+            elif d < 50.0:
+                col = QColor(245, 158, 11, int(255 * alpha))  # Amber
+            else:
+                col = QColor(16, 185, 129, int(255 * alpha))  # Green
+
+            painter.setBrush(QBrush(col))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPointF(pt_x, pt_y), 5, 5)
+
+        # Sweeping Radial Beam Line tracking current Servo Angle
+        beam_rad = math.radians(180 - self.current_angle)
+        beam_x = center_x + radius * math.cos(beam_rad)
+        beam_y = center_y - radius * math.sin(beam_rad)
+
+        pen_beam = QPen(QColor("#00E5FF"), 2, Qt.SolidLine)
+        painter.setPen(pen_beam)
+        painter.drawLine(QPointF(center_x, center_y), QPointF(beam_x, beam_y))
+
+        # Center Origin Hub Dot
+        painter.setBrush(QBrush(QColor("#00E5FF")))
+        painter.drawEllipse(QPointF(center_x, center_y), 6, 6)
 
 class MainWindow(QMainWindow):
     def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager, car_controller, websocket_manager):
@@ -34,6 +140,7 @@ class MainWindow(QMainWindow):
         # Wire PySide6 Signals from WebSocket Manager
         self.websocket_manager.connection_status_changed.connect(self._on_ws_status_changed)
         self.websocket_manager.telemetry_received.connect(self._on_ws_telemetry)
+        self.websocket_manager.radar_telemetry_received.connect(self._on_ws_radar_telemetry)
         self.websocket_manager.log_emitted.connect(self._on_ws_log)
 
         self._build_ui()
@@ -180,12 +287,17 @@ class MainWindow(QMainWindow):
         self._build_tab_telemetry()
         self.tab_widget.addTab(self.tab_telemetry, "📊 Telemetry & Status")
 
-        # TAB 2: Calibration & Settings
+        # TAB 2: Ultrasonic Radar & Obstacle Scanner
+        self.tab_radar = QWidget()
+        self._build_tab_radar()
+        self.tab_widget.addTab(self.tab_radar, "🛰️ Ultrasonic Radar")
+
+        # TAB 3: Calibration & Settings
         self.tab_settings = QWidget()
         self._build_tab_settings()
         self.tab_widget.addTab(self.tab_settings, "⚙️ Settings & Calibration")
 
-        # TAB 3: System Terminal & Logs
+        # TAB 4: System Terminal & Logs
         self.tab_logs = QWidget()
         self._build_tab_logs()
         self.tab_widget.addTab(self.tab_logs, "💻 Terminal Logs")
@@ -640,6 +752,101 @@ class MainWindow(QMainWindow):
                 btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none;")
             else:
                 btn.setStyleSheet("background-color: #18202D; color: #475569; border: 1px solid #232D3F;")
+
+    def _build_tab_radar(self):
+        layout = QVBoxLayout(self.tab_radar)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        # Radar Scope Canvas Card
+        card_scope = QFrame()
+        card_scope.setProperty("class", "Card")
+        scope_layout = QVBoxLayout(card_scope)
+        scope_layout.setContentsMargins(8, 8, 8, 8)
+        
+        scope_hdr = QHBoxLayout()
+        scope_hdr.addWidget(self._create_metric_header("LIVE POLAR ULTRASONIC RADAR SCOPE (30° - 150°)"))
+        self.lbl_radar_status_badge = QLabel("🟢 CLEAR")
+        self.lbl_radar_status_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #10B981;")
+        scope_hdr.addWidget(self.lbl_radar_status_badge, alignment=Qt.AlignRight)
+        scope_layout.addLayout(scope_hdr)
+
+        self.radar_widget = RadarWidget()
+        scope_layout.addWidget(self.radar_widget, stretch=1)
+        layout.addWidget(card_scope, stretch=2)
+
+        # Radar Metrics Grid Card
+        card_metrics = QFrame()
+        card_metrics.setProperty("class", "Card")
+        m_layout = QGridLayout(card_metrics)
+        m_layout.setSpacing(8)
+
+        self.lbl_r_angle = QLabel("90°")
+        self.lbl_r_angle.setProperty("class", "MetricValue")
+        self.lbl_r_angle.setStyleSheet("color: #00E5FF;")
+
+        self.lbl_r_dist = QLabel("200 cm")
+        self.lbl_r_dist.setProperty("class", "MetricValue")
+        self.lbl_r_dist.setStyleSheet("color: #10B981;")
+
+        self.lbl_r_left = QLabel("200 cm")
+        self.lbl_r_left.setProperty("class", "MetricValue")
+        self.lbl_r_left.setStyleSheet("color: #F1F5F9;")
+
+        self.lbl_r_center = QLabel("200 cm")
+        self.lbl_r_center.setProperty("class", "MetricValue")
+        self.lbl_r_center.setStyleSheet("color: #F1F5F9;")
+
+        self.lbl_r_right = QLabel("200 cm")
+        self.lbl_r_right.setProperty("class", "MetricValue")
+        self.lbl_r_right.setStyleSheet("color: #F1F5F9;")
+
+        self.lbl_r_path = QLabel("CENTER CLEAR")
+        self.lbl_r_path.setStyleSheet("font-weight: bold; color: #00E5FF;")
+
+        m_layout.addWidget(self._create_metric_header("SERVO ANGLE"), 0, 0)
+        m_layout.addWidget(self.lbl_r_angle, 1, 0)
+
+        m_layout.addWidget(self._create_metric_header("CURRENT DISTANCE"), 0, 1)
+        m_layout.addWidget(self.lbl_r_dist, 1, 1)
+
+        m_layout.addWidget(self._create_metric_header("RECOMMENDED PATH"), 0, 2)
+        m_layout.addWidget(self.lbl_r_path, 1, 2)
+
+        m_layout.addWidget(self._create_metric_header("LEFT SECTOR (110°-150°)"), 2, 0)
+        m_layout.addWidget(self.lbl_r_left, 3, 0)
+
+        m_layout.addWidget(self._create_metric_header("CENTER SECTOR (70°-110°)"), 2, 1)
+        m_layout.addWidget(self.lbl_r_center, 3, 1)
+
+        m_layout.addWidget(self._create_metric_header("RIGHT SECTOR (30°-70°)"), 2, 2)
+        m_layout.addWidget(self.lbl_r_right, 3, 2)
+
+        layout.addWidget(card_metrics)
+
+    @Slot(dict)
+    def _on_ws_radar_telemetry(self, data):
+        angle = data.get("angle", 90)
+        dist = data.get("distance", 200)
+        left = data.get("left_dist", 200)
+        center = data.get("center_dist", 200)
+        right = data.get("right_dist", 200)
+        status = data.get("status", "CLEAR")
+        path = data.get("best_path", "CENTER")
+
+        self.radar_widget.update_radar(angle, dist)
+
+        self.lbl_r_angle.setText(f"{angle}°")
+        self.lbl_r_dist.setText(f"{dist} cm")
+        self.lbl_r_left.setText(f"{left} cm")
+        self.lbl_r_center.setText(f"{center} cm")
+        self.lbl_r_right.setText(f"{right} cm")
+
+        meta = config.RADAR_STATUS_METADATA.get(status, ("CLEAR", "🟢", "#10B981"))
+        self.lbl_radar_status_badge.setText(f"{meta[1]} {meta[0]}")
+        self.lbl_radar_status_badge.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {meta[2]};")
+
+        self.lbl_r_path.setText(f"RECOMMENDED: {path}")
 
     def closeEvent(self, event):
         """Clean application exit handler."""
