@@ -18,6 +18,8 @@
 #define AP_IP_1 192
 #define AP_IP_2 168
 #define AP_IP_3 4
+#define AP_IP_4 1
+
 #define WEBSOCKET_PORT 81
 
 // Bluetooth Classic SPP Feature Flag (0 = Wi-Fi Only [Default, <700KB], 1 = Dual Wi-Fi + Bluetooth [Requires Huge APP Partition])
