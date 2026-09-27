@@ -7,6 +7,7 @@
 #include "config.h"
 #include "wifi_manager.h"
 #include "websocket_server.h"
+#include "bluetooth_manager.h"
 #include "motor_controller.h"
 #include "safety_controller.h"
 #include "radar_controller.h"
@@ -16,7 +17,7 @@ void setup() {
     delay(500);
 
     Serial.println("\n==================================================");
-    Serial.println("  ESP32 Wi-Fi / WebSocket IoT Car Firmware v2.0  ");
+    Serial.println("  ESP32 Dual Wi-Fi & Bluetooth IoT Car Firmware  ");
     Serial.println("==================================================");
 
     // 1. Initialize L298N Motor Driver Pins & ESP32 LEDC PWM
@@ -34,22 +35,28 @@ void setup() {
     // 5. Setup WebSocket Server on Port 81
     setupWebSocketServer();
 
-    Serial.println("[+] ESP32 System Ready!");
+    // 6. Setup Bluetooth Serial SPP Server ("GestureCar_BT")
+    setupBluetoothServer();
+
+    Serial.println("[+] ESP32 Dual Communication System Ready!");
 }
 
 void loop() {
-    // 1. Handle incoming WebSocket client events & messages
+    // 1. Handle incoming WebSocket client events & messages over Wi-Fi
     loopWebSocketServer();
 
-    // 2. Update smooth motor acceleration/deceleration ramping
+    // 2. Handle incoming Bluetooth Serial SPP events & messages over Bluetooth
+    loopBluetoothServer();
+
+    // 3. Update smooth motor acceleration/deceleration ramping
     updateMotorRamp();
 
-    // 3. Continuously sweep SG90 servo & sample HC-SR04 ultrasonic distance
+    // 4. Continuously sweep SG90 servo & sample HC-SR04 ultrasonic distance
     scanEnvironment();
 
-    // 4. Real-time Autonomous Route Diversion if an obstacle suddenly appears while driving
+    // 5. Real-time Autonomous Route Diversion if an obstacle suddenly appears while driving
     checkAutonomousObstacleAvoidance();
 
-    // 5. Check 500ms safety watchdog (auto-stops motors if signal drops)
+    // 6. Check 500ms safety watchdog (auto-stops motors if signal drops)
     checkSafetyWatchdog();
 }
