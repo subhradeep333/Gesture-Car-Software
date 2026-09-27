@@ -3,6 +3,9 @@
 #include "motor_controller.h"
 #include "safety_controller.h"
 #include "radar_controller.h"
+
+#if ENABLE_BLUETOOTH_SERIAL
+
 #include "BluetoothSerial.h"
 #include <ArduinoJson.h>
 
@@ -14,7 +17,6 @@ static BluetoothSerial SerialBT;
 static bool bt_client_connected = false;
 
 void setupBluetoothServer() {
-    // Initialize Bluetooth Serial device with name "GestureCar_BT"
     SerialBT.begin("GestureCar_BT");
     Serial.println("[+] Bluetooth Serial (SPP) Started as 'GestureCar_BT'");
 }
@@ -33,7 +35,6 @@ void loopBluetoothServer() {
         }
     }
 
-    // Process incoming Bluetooth Serial JSON data packets
     if (SerialBT.available()) {
         String input_str = SerialBT.readStringUntil('\n');
         input_str.trim();
@@ -44,7 +45,6 @@ void loopBluetoothServer() {
         DeserializationError error = deserializeJson(doc, input_str);
 
         if (error) {
-            // Support raw single-character commands ('F', 'B', 'L', 'R', 'S', 'E') for hyper-light BT serial test
             if (input_str.length() == 1) {
                 char cmd = input_str[0];
                 resetSafetyWatchdog();
@@ -103,3 +103,12 @@ void loopBluetoothServer() {
 bool isBluetoothConnected() {
     return SerialBT.hasClient();
 }
+
+#else
+
+// Stubs when Bluetooth is disabled to keep binary size under 700KB
+void setupBluetoothServer() {}
+void loopBluetoothServer() {}
+bool isBluetoothConnected() { return false; }
+
+#endif

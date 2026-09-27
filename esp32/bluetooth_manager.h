@@ -7,6 +7,7 @@
 #define BLUETOOTH_MANAGER_H
 
 #include <Arduino.h>
+#include "config.h"
 
 void setupBluetoothServer();
 void loopBluetoothServer();
