@@ -47,30 +47,24 @@ class GestureClassifier:
 
     def _is_finger_extended(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
         """
-        Determines if a finger is extended using dual-criterion:
-        1. 3D Joint flex angle cosine (cos > 0.60)
-        2. Scale-invariant MCP-relative joint distance ratio & palm size threshold.
+        Determines if a finger is extended (straight out).
+        Requires strict joint angle alignment and scale-invariant distance ratios.
         """
         d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
         d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
         cos_angle = self._compute_joint_angle_cos(landmarks[mcp_idx], landmarks[pip_idx], landmarks[tip_idx])
 
-        is_straight = (cos_angle > 0.60) or (d2_tip_mcp > 1.2 * d2_pip_mcp)
-        return is_straight and (d2_tip_mcp > 0.35 * palm_size_sq)
+        # Finger is extended if joint angle is straight (cos > 0.50) AND distance ratio is large (> 1.5)
+        # OR distance ratio is very large (> 2.2) and tip-to-MCP is > 0.45 * palm_size_sq
+        is_straight = (cos_angle > 0.50 and d2_tip_mcp > 1.5 * d2_pip_mcp) or (d2_tip_mcp > 2.2 * d2_pip_mcp)
+        return is_straight and (d2_tip_mcp > 0.45 * palm_size_sq)
 
     def _is_finger_curled(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
         """
         Determines if a finger is curled towards the palm.
-        Ensures strict mutual exclusivity with _is_finger_extended.
+        Strictly mutually exclusive with _is_finger_extended.
         """
-        if self._is_finger_extended(landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
-            return False
-
-        d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
-        d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
-        cos_angle = self._compute_joint_angle_cos(landmarks[mcp_idx], landmarks[pip_idx], landmarks[tip_idx])
-
-        return (d2_tip_mcp <= 1.25 * d2_pip_mcp) or (d2_tip_mcp <= 0.42 * palm_size_sq) or (cos_angle < 0.25)
+        return not self._is_finger_extended(landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq)
 
     def classify_frame(self, detected, landmarks, confidence, min_confidence=0.70):
         """
