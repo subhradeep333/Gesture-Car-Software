@@ -1,8 +1,10 @@
 """
-Hand Gesture Classifier with Landmark Geometry and Temporal Hysteresis Smoothing.
-Optimized with squared distance metrics to eliminate math.sqrt CPU overhead.
+Hand Gesture Classifier with 3D Landmark Geometry, Joint Angle Analysis,
+and Adaptive Temporal Hysteresis Smoothing.
+Optimized with 3D vector math and squared distance metrics.
 """
 
+import math
 from collections import deque
 import config
 
@@ -26,24 +28,49 @@ class GestureClassifier:
         dz = pt1[2] - pt2[2]
         return dx * dx + dy * dy + dz * dz
 
+    @staticmethod
+    def _compute_joint_angle_cos(mcp, pip, tip):
+        """
+        Computes 3D cosine of flex angle between (pip - mcp) and (tip - pip) vectors.
+        Returns cos(theta): ~1.0 for fully straight finger, <= 0.2 for bent/curled finger.
+        """
+        u = (pip[0] - mcp[0], pip[1] - mcp[1], pip[2] - mcp[2])
+        v = (tip[0] - pip[0], tip[1] - pip[1], tip[2] - pip[2])
+
+        dot = u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+        mag_u = math.sqrt(u[0]**2 + u[1]**2 + u[2]**2)
+        mag_v = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
+
+        if mag_u * mag_v < 1e-6:
+            return 1.0
+        return dot / (mag_u * mag_v)
+
     def _is_finger_extended(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
         """
-        Determines if a finger is extended using MCP-relative joint distance ratio:
-        Scale-invariant & 100% direction-independent across all pointing angles (UP, DOWN, LEFT, RIGHT).
+        Determines if a finger is extended using dual-criterion:
+        1. 3D Joint flex angle cosine (cos > 0.60)
+        2. Scale-invariant MCP-relative joint distance ratio & palm size threshold.
         """
         d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
         d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
+        cos_angle = self._compute_joint_angle_cos(landmarks[mcp_idx], landmarks[pip_idx], landmarks[tip_idx])
 
-        return (d2_tip_mcp > 1.2 * d2_pip_mcp) and (d2_tip_mcp > 0.35 * palm_size_sq)
+        is_straight = (cos_angle > 0.60) or (d2_tip_mcp > 1.2 * d2_pip_mcp)
+        return is_straight and (d2_tip_mcp > 0.35 * palm_size_sq)
 
     def _is_finger_curled(self, landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
         """
-        Determines if a finger is curled towards the palm using MCP-relative joint distance ratio.
+        Determines if a finger is curled towards the palm.
+        Ensures strict mutual exclusivity with _is_finger_extended.
         """
+        if self._is_finger_extended(landmarks, tip_idx, pip_idx, mcp_idx, palm_size_sq):
+            return False
+
         d2_tip_mcp = self._sq_distance(landmarks[tip_idx], landmarks[mcp_idx])
         d2_pip_mcp = self._sq_distance(landmarks[pip_idx], landmarks[mcp_idx])
+        cos_angle = self._compute_joint_angle_cos(landmarks[mcp_idx], landmarks[pip_idx], landmarks[tip_idx])
 
-        return (d2_tip_mcp <= 1.2 * d2_pip_mcp) or (d2_tip_mcp <= 0.42 * palm_size_sq)
+        return (d2_tip_mcp <= 1.25 * d2_pip_mcp) or (d2_tip_mcp <= 0.42 * palm_size_sq) or (cos_angle < 0.25)
 
     def classify_frame(self, detected, landmarks, confidence, min_confidence=0.70):
         """
@@ -111,7 +138,7 @@ class GestureClassifier:
 
     def process(self, detected, landmarks, confidence, min_confidence=0.70):
         """
-        Applies temporal hysteresis smoothing to candidate gesture.
+        Applies temporal hysteresis smoothing with fast-path safety overrides.
         Returns (candidate_gesture, stable_command, is_stable).
         """
         # Fail-safe: No hand or low confidence immediately forces candidate to STOP
@@ -124,11 +151,19 @@ class GestureClassifier:
         candidate = self.classify_frame(detected, landmarks, confidence, min_confidence)
         self.current_candidate_gesture = candidate
 
-        # Immediate Emergency Stop override (Fist)
+        # Fast-Path Safety Override 1: Immediate Emergency Stop (Fist)
         if candidate == config.CMD_EMERGENCY_STOP:
             self.frame_buffer.clear()
             self.current_stable_command = config.CMD_EMERGENCY_STOP
             return candidate, config.CMD_EMERGENCY_STOP, True
+
+        # Fast-Path Safety Override 2: Fast Stop (Open Palm) within 2 frames
+        if candidate == config.CMD_STOP:
+            if self.current_stable_command != config.CMD_STOP:
+                stop_count = sum(1 for g in self.frame_buffer if g == config.CMD_STOP)
+                if stop_count >= 1:
+                    self.current_stable_command = config.CMD_STOP
+                    return candidate, config.CMD_STOP, True
 
         # Append candidate to buffer
         self.frame_buffer.append(candidate)
@@ -140,3 +175,4 @@ class GestureClassifier:
                 return candidate, self.current_stable_command, True
 
         return candidate, self.current_stable_command, False
+

@@ -131,6 +131,16 @@ def run_all_tests():
     c_back = classifier.classify_frame(True, back_landmarks, 0.95)
     record_test("Pointing Down (Backward 'B') Classification", c_back == config.CMD_BACKWARD)
 
+    # 7. 3D Joint Angle Cosine Verification
+    cos_straight = classifier._compute_joint_angle_cos((0.4, 0.5, 0.0), (0.4, 0.4, 0.0), (0.4, 0.2, 0.0))
+    cos_bent = classifier._compute_joint_angle_cos((0.4, 0.5, 0.0), (0.4, 0.4, 0.0), (0.4, 0.5, 0.0))
+    record_test("3D Joint Angle Straight Finger (cos ~ 1.0)", cos_straight > 0.95)
+    record_test("3D Joint Angle Bent Finger (cos <= 0.25)", cos_bent <= 0.25)
+
+    # 8. Fast-Path Emergency Stop Hysteresis Override
+    c_cand, c_stable, is_st = classifier.process(True, fist_landmarks, 0.95)
+    record_test("Fast-Path Emergency Stop Instant Override", c_stable == config.CMD_EMERGENCY_STOP and is_st is True)
+
     # --------------------------------------------------------------------------
     # SUITE 4: SAFETY ENGINE & FAULT EVALUATION
     # --------------------------------------------------------------------------

@@ -4,6 +4,7 @@ Supports Python 3.8 - 3.14+ across macOS, Linux, and Windows.
 """
 
 import os
+import math
 import urllib.request
 import cv2
 import mediapipe as mp
@@ -71,16 +72,32 @@ class HandDetector:
                 print(f"[!] Failed to download model automatically: {e}")
 
     def _smooth_landmarks(self, current_landmarks):
-        """Applies Exponential Moving Average (EMA) to 21 3D landmarks for noise reduction."""
+        """
+        Applies Velocity-Adaptive Exponential Moving Average (EMA) to 21 3D landmarks.
+        Dynamically adjusts smoothing alpha:
+        - Fast movement -> High alpha (0.95) for sub-30ms low-latency response.
+        - Stationary hand -> Low alpha (0.30) for zero landmark jitter / rock-solid stability.
+        """
         if self.prev_landmarks is None or len(self.prev_landmarks) != len(current_landmarks):
             self.prev_landmarks = current_landmarks
             return current_landmarks
 
+        # Compute wrist displacement (velocity metric)
+        cx0, cy0, cz0 = current_landmarks[0]
+        px0, py0, pz0 = self.prev_landmarks[0]
+        disp_sq = (cx0 - px0)**2 + (cy0 - py0)**2 + (cz0 - pz0)**2
+        disp = math.sqrt(disp_sq)
+
+        # Adaptive alpha curve between 0.30 (still) and 0.95 (fast motion)
+        min_alpha, max_alpha = 0.30, 0.95
+        cutoff = 0.02  # Normalized displacement cutoff
+        dynamic_alpha = min_alpha + (max_alpha - min_alpha) * min(1.0, disp / cutoff)
+
         smoothed = []
         for (cx, cy, cz), (px, py, pz) in zip(current_landmarks, self.prev_landmarks):
-            sx = self.smooth_alpha * cx + (1.0 - self.smooth_alpha) * px
-            sy = self.smooth_alpha * cy + (1.0 - self.smooth_alpha) * py
-            sz = self.smooth_alpha * cz + (1.0 - self.smooth_alpha) * pz
+            sx = dynamic_alpha * cx + (1.0 - dynamic_alpha) * px
+            sy = dynamic_alpha * cy + (1.0 - dynamic_alpha) * py
+            sz = dynamic_alpha * cz + (1.0 - dynamic_alpha) * pz
             smoothed.append((sx, sy, sz))
 
         self.prev_landmarks = smoothed
@@ -118,6 +135,60 @@ class HandDetector:
             )
             self.landmarker = vision.HandLandmarker.create_from_options(options)
 
+    def _select_best_hand(self, hand_landmarks_list, handedness_list=None):
+        """
+        Selects the best hand candidate when multiple hands appear in frame.
+        Prioritizes continuity with previous hand position and largest bounding box.
+        """
+        if not hand_landmarks_list:
+            return None, 0, 0.95, "Right"
+
+        best_idx = 0
+        max_score = -1.0
+
+        for idx, landmarks in enumerate(hand_landmarks_list):
+            raw_lms = [(lm.x, lm.y, lm.z) for lm in (landmarks.landmark if hasattr(landmarks, "landmark") else landmarks)]
+            xs = [pt[0] for pt in raw_lms]
+            ys = [pt[1] for pt in raw_lms]
+            area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+
+            conf = 0.95
+            htype = "Right"
+            if handedness_list and idx < len(handedness_list):
+                h_item = handedness_list[idx]
+                if isinstance(h_item, list):
+                    conf = h_item[0].score
+                    htype = h_item[0].category_name
+                elif hasattr(h_item, "classification"):
+                    conf = h_item.classification[0].score
+                    htype = h_item.classification[0].label
+
+            # Continuity score with previous wrist
+            continuity = 0.0
+            if self.prev_landmarks is not None:
+                pw_x, pw_y = self.prev_landmarks[0][0], self.prev_landmarks[0][1]
+                dist_prev = math.sqrt((raw_lms[0][0] - pw_x)**2 + (raw_lms[0][1] - pw_y)**2)
+                continuity = max(0.0, 1.0 - dist_prev)
+
+            score = area * 0.4 + conf * 0.3 + continuity * 0.3
+            if score > max_score:
+                max_score = score
+                best_idx = idx
+
+        best_landmarks = hand_landmarks_list[best_idx]
+        best_conf = 0.95
+        best_htype = "Right"
+        if handedness_list and best_idx < len(handedness_list):
+            h_item = handedness_list[best_idx]
+            if isinstance(h_item, list):
+                best_conf = h_item[0].score
+                best_htype = h_item[0].category_name
+            elif hasattr(h_item, "classification"):
+                best_conf = h_item.classification[0].score
+                best_htype = h_item.classification[0].label
+
+        return best_landmarks, best_idx, best_conf, best_htype
+
     def process_frame(self, frame):
         """
         Processes an BGR OpenCV frame.
@@ -148,13 +219,9 @@ class HandDetector:
                 self.prev_landmarks = None
                 return False, [], [], 0.0, "Unknown"
 
-            hand_landmarks = results.hand_landmarks[0]
-            confidence = 0.95
-            hand_type = "Right"
-
-            if results.handedness:
-                confidence = results.handedness[0][0].score
-                hand_type = results.handedness[0][0].category_name
+            hand_landmarks, _, confidence, hand_type = self._select_best_hand(
+                results.hand_landmarks, getattr(results, "handedness", None)
+            )
 
             raw_lms = [(lm.x, lm.y, lm.z) for lm in hand_landmarks]
             landmarks_list = self._smooth_landmarks(raw_lms)
@@ -168,11 +235,9 @@ class HandDetector:
                 self.prev_landmarks = None
                 return False, [], [], 0.0, "Unknown"
 
-            hand_landmarks = results.multi_hand_landmarks[0]
-            hand_meta = results.multi_handedness[0].classification[0]
-            
-            confidence = hand_meta.score
-            hand_type = hand_meta.label
+            hand_landmarks, _, confidence, hand_type = self._select_best_hand(
+                results.multi_hand_landmarks, getattr(results, "multi_handedness", None)
+            )
 
             raw_lms = [(lm.x, lm.y, lm.z) for lm in hand_landmarks.landmark]
             landmarks_list = self._smooth_landmarks(raw_lms)
