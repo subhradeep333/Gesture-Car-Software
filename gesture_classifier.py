@@ -132,7 +132,8 @@ class GestureClassifier:
 
     def process(self, detected, landmarks, confidence, min_confidence=0.70):
         """
-        Applies temporal hysteresis smoothing with fast-path safety overrides.
+        Applies temporal hysteresis smoothing with majority voting.
+        Ensures commands are passed to ESP32 within 2 frames (~30ms) while filtering out single-frame noise.
         Returns (candidate_gesture, stable_command, is_stable).
         """
         # Fail-safe: No hand or low confidence immediately forces candidate to STOP
@@ -145,28 +146,30 @@ class GestureClassifier:
         candidate = self.classify_frame(detected, landmarks, confidence, min_confidence)
         self.current_candidate_gesture = candidate
 
-        # Fast-Path Safety Override 1: Immediate Emergency Stop (Fist)
+        # Immediate Emergency Stop Override (✊ Fist)
         if candidate == config.CMD_EMERGENCY_STOP:
             self.frame_buffer.clear()
             self.current_stable_command = config.CMD_EMERGENCY_STOP
             return candidate, config.CMD_EMERGENCY_STOP, True
 
-        # Fast-Path Safety Override 2: Fast Stop (Open Palm) within 2 frames
-        if candidate == config.CMD_STOP:
-            if self.current_stable_command != config.CMD_STOP:
-                stop_count = sum(1 for g in self.frame_buffer if g == config.CMD_STOP)
-                if stop_count >= 1:
-                    self.current_stable_command = config.CMD_STOP
-                    return candidate, config.CMD_STOP, True
-
-        # Append candidate to buffer
+        # Append candidate to frame buffer
         self.frame_buffer.append(candidate)
 
-        # Require all entries in buffer to match candidate before committing state change
-        if len(self.frame_buffer) == self.stability_threshold:
-            if all(g == candidate for g in self.frame_buffer):
-                self.current_stable_command = candidate
-                return candidate, self.current_stable_command, True
+        # Count occurrences of candidate gestures in buffer
+        counts = {}
+        for g in self.frame_buffer:
+            counts[g] = counts.get(g, 0) + 1
 
-        return candidate, self.current_stable_command, False
+        # Find majority gesture in buffer
+        most_common_gesture = max(counts, key=counts.get)
+        max_count = counts[most_common_gesture]
+
+        # Require majority agreement (>= 50% of buffer capacity, minimum 2 frames)
+        required_votes = max(2, int(0.50 * self.stability_threshold))
+
+        if max_count >= required_votes:
+            self.current_stable_command = most_common_gesture
+            return candidate, self.current_stable_command, True
+
+        return candidate, self.current_stable_command, True
 
