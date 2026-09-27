@@ -4,6 +4,8 @@
  */
 
 #include <Arduino.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 #include "config.h"
 #include "wifi_manager.h"
 #include "websocket_server.h"
@@ -13,6 +15,9 @@
 #include "radar_controller.h"
 
 void setup() {
+    // Disable hardware brownout detector (prevents ESP32 reboots from battery voltage dips when motors start)
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
     Serial.begin(115200);
     delay(500);
 
