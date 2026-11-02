@@ -10,12 +10,24 @@ static uint8_t target_speed_enb = 0;
 static unsigned long last_ramp_time = 0;
 
 static inline void applyHardwarePwm(uint8_t speed_ena, uint8_t speed_enb) {
+    uint8_t pwm_left = 0;
+    uint8_t pwm_right = 0;
+
+    if (speed_ena > 0) {
+        float calc_left = (float)speed_ena * LEFT_MOTOR_TRIM;
+        pwm_left = (uint8_t)constrain((int)calc_left, MIN_MOTOR_PWM, 255);
+    }
+    if (speed_enb > 0) {
+        float calc_right = (float)speed_enb * RIGHT_MOTOR_TRIM;
+        pwm_right = (uint8_t)constrain((int)calc_right, MIN_MOTOR_PWM, 255);
+    }
+
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
-    ledcWrite(ENA_PIN, speed_ena);
-    ledcWrite(ENB_PIN, speed_enb);
+    ledcWrite(ENA_PIN, pwm_left);
+    ledcWrite(ENB_PIN, pwm_right);
 #else
-    ledcWrite(PWM_CHANNEL_ENA, speed_ena);
-    ledcWrite(PWM_CHANNEL_ENB, speed_enb);
+    ledcWrite(PWM_CHANNEL_ENA, pwm_left);
+    ledcWrite(PWM_CHANNEL_ENB, pwm_right);
 #endif
 }
 
@@ -70,26 +82,36 @@ void updateMotorRamp() {
     }
 }
 
+static inline void setMotorDirection(bool in1, bool in2, bool in3, bool in4) {
+#if INVERT_LEFT_MOTOR
+    digitalWrite(IN1_PIN, in2 ? HIGH : LOW);
+    digitalWrite(IN2_PIN, in1 ? HIGH : LOW);
+#else
+    digitalWrite(IN1_PIN, in1 ? HIGH : LOW);
+    digitalWrite(IN2_PIN, in2 ? HIGH : LOW);
+#endif
+
+#if INVERT_RIGHT_MOTOR
+    digitalWrite(IN3_PIN, in4 ? HIGH : LOW);
+    digitalWrite(IN4_PIN, in3 ? HIGH : LOW);
+#else
+    digitalWrite(IN3_PIN, in3 ? HIGH : LOW);
+    digitalWrite(IN4_PIN, in4 ? HIGH : LOW);
+#endif
+}
+
 void moveForward(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
 
-    digitalWrite(IN1_PIN, HIGH);
-    digitalWrite(IN2_PIN, LOW);
-
-    digitalWrite(IN3_PIN, HIGH);
-    digitalWrite(IN4_PIN, LOW);
+    setMotorDirection(HIGH, LOW, HIGH, LOW);
 }
 
 void moveBackward(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
 
-    digitalWrite(IN1_PIN, LOW);
-    digitalWrite(IN2_PIN, HIGH);
-
-    digitalWrite(IN3_PIN, LOW);
-    digitalWrite(IN4_PIN, HIGH);
+    setMotorDirection(LOW, HIGH, LOW, HIGH);
 }
 
 void turnLeft(uint8_t speed) {
@@ -97,11 +119,7 @@ void turnLeft(uint8_t speed) {
     target_speed_enb = speed;
 
     // Skid Steer Left: Left wheels reverse, Right wheels forward
-    digitalWrite(IN1_PIN, LOW);
-    digitalWrite(IN2_PIN, HIGH);
-
-    digitalWrite(IN3_PIN, HIGH);
-    digitalWrite(IN4_PIN, LOW);
+    setMotorDirection(LOW, HIGH, HIGH, LOW);
 }
 
 void turnRight(uint8_t speed) {
@@ -109,11 +127,7 @@ void turnRight(uint8_t speed) {
     target_speed_enb = speed;
 
     // Skid Steer Right: Left wheels forward, Right wheels reverse
-    digitalWrite(IN1_PIN, HIGH);
-    digitalWrite(IN2_PIN, LOW);
-
-    digitalWrite(IN3_PIN, LOW);
-    digitalWrite(IN4_PIN, HIGH);
+    setMotorDirection(HIGH, LOW, LOW, HIGH);
 }
 
 void stopMotors() {

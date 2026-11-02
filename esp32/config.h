@@ -26,19 +26,28 @@
 #define ENABLE_BLUETOOTH_SERIAL 0
 
 // L298N Motor Driver GPIO Pinout for ESP32
-#define ENA_PIN 14  // PWM Speed Left Motors
+#define ENA_PIN 25  // PWM Speed Left Motors
 #define IN1_PIN 27  // Direction Left 1
-#define IN2_PIN 26  // Direction Left 2
+#define IN2_PIN 14  // Direction Left 2
 
-#define ENB_PIN 32  // PWM Speed Right Motors
-#define IN3_PIN 25  // Direction Right 1
-#define IN4_PIN 16  // Direction Right 2 (RX2 Pin)
+#define ENB_PIN 26  // PWM Speed Right Motors
+#define IN3_PIN 18  // Direction Right 1
+#define IN4_PIN 19  // Direction Right 2
 
-// ESP32 LEDC PWM Hardware Timer Settings
+// ESP32 LEDC PWM Hardware Timer & Power Calibration Settings
 #define PWM_FREQ 5000
 #define PWM_RESOLUTION 8  // 8-bit PWM (0 - 255)
 #define PWM_CHANNEL_ENA 0
 #define PWM_CHANNEL_ENB 1
+
+// Motor Power Calibration & Trim (Adjust 0.5f - 1.0f if one motor pair turns faster than the other)
+#define LEFT_MOTOR_TRIM 1.0f   // Multiplier for Left Motors (ENA)
+#define RIGHT_MOTOR_TRIM 1.0f  // Multiplier for Right Motors (ENB)
+#define MIN_MOTOR_PWM 100      // Minimum PWM floor to overcome motor gearbox friction
+
+// Motor Direction Polarity Inversion (Set to true if motors spin backward when showing forward)
+#define INVERT_LEFT_MOTOR  true  // Reverses Left Motor Pair direction
+#define INVERT_RIGHT_MOTOR true  // Reverses Right Motor Pair direction
 
 // Safety Watchdog Timer Threshold (ms)
 #define SAFETY_TIMEOUT_MS 500
@@ -50,7 +59,7 @@
 // SG90 Servo & HC-SR04 Ultrasonic Radar Hardware Pinout
 #define SERVO_PIN 13       // SG90 Servo Signal Pin
 #define TRIG_PIN 5         // HC-SR04 Ultrasonic Trigger Pin
-#define ECHO_PIN 18        // HC-SR04 Ultrasonic Echo Pin
+#define ECHO_PIN 17        // HC-SR04 Ultrasonic Echo Pin (GPIO 17)
 #define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
 
 // Radar & Obstacle Avoidance Configuration Parameters
