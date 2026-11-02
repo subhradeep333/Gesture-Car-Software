@@ -186,7 +186,7 @@ class MainWindow(QMainWindow):
 
         # App Brand Title
         title_box = QVBoxLayout()
-        title_lbl = QLabel("⚡ ESP32 AI GESTURE CAR CONTROLLER")
+        title_lbl = QLabel("Software Control Gesture Car")
         title_lbl.setProperty("class", "AppTitle")
         sub_lbl = QLabel("REAL-TIME VISION TELEMETRY & ROBOTICS COMMAND DASHBOARD")
         sub_lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B; letter-spacing: 0.5px;")
@@ -294,6 +294,75 @@ class MainWindow(QMainWindow):
         actions_layout.addWidget(self.btn_emergency, stretch=1)
 
         left_layout.addWidget(actions_card)
+
+        # ----------------------------------------------------
+        # GESTURE SIGNS & ACTION GUIDE CARD
+        # ----------------------------------------------------
+        guide_card = QFrame()
+        guide_card.setProperty("class", "Card")
+        guide_layout = QVBoxLayout(guide_card)
+        guide_layout.setContentsMargins(12, 10, 12, 10)
+        guide_layout.setSpacing(8)
+
+        # Header with title & helpful tip
+        g_hdr = QHBoxLayout()
+        g_title = QLabel("✋ GESTURE SIGNS & CONTROL REFERENCE")
+        g_title.setProperty("class", "SectionHeader")
+        g_hdr.addWidget(g_title)
+
+        g_tip = QLabel("Live Recognition Feedback")
+        g_tip.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B;")
+        g_hdr.addWidget(g_tip, alignment=Qt.AlignRight)
+        guide_layout.addLayout(g_hdr)
+
+        # Grid layout for 6 gesture signs
+        signs_grid = QGridLayout()
+        signs_grid.setSpacing(8)
+
+        self.gesture_guide_cards = {}
+
+        gesture_cards_data = [
+            # (row, col, cmd_key, icon, title, sign_desc, motor_action, hex_color)
+            (0, 0, config.CMD_FORWARD, "☝️", "FORWARD", "Index finger pointing UP", "Both motors drive forward", "#2ECC71"),
+            (0, 1, config.CMD_STOP, "✋", "STOP", "Open flat palm facing camera", "Smooth zero-PWM stop", "#E67E22"),
+            (0, 2, config.CMD_EMERGENCY_STOP, "✊", "EMERGENCY", "Closed fist tightly curled", "Instant hardware brake lock", "#E74C3C"),
+            (1, 0, config.CMD_LEFT, "👈", "LEFT", "Index finger pointing LEFT", "Skid-steer left turn", "#F39C12"),
+            (1, 1, config.CMD_BACKWARD, "👇", "BACKWARD", "Index finger pointing DOWN", "Both motors reverse drive", "#3498DB"),
+            (1, 2, config.CMD_RIGHT, "👉", "RIGHT", "Index finger pointing RIGHT", "Skid-steer right turn", "#9B59B6"),
+        ]
+
+        for row, col, cmd_key, icon, title, sign_desc, motor_action, hex_col in gesture_cards_data:
+            item_card = QFrame()
+            item_card.setProperty("accent_color", hex_col)
+            item_card.setStyleSheet(
+                "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 6px 8px;"
+            )
+            i_layout = QVBoxLayout(item_card)
+            i_layout.setContentsMargins(6, 6, 6, 6)
+            i_layout.setSpacing(2)
+
+            top_row = QHBoxLayout()
+            lbl_title = QLabel(f"{icon} <span style='color: {hex_col}; font-weight: 800;'>{title}</span> <span style='color: #64748B; font-size: 10px;'>[{cmd_key}]</span>")
+            lbl_title.setTextFormat(Qt.RichText)
+            lbl_title.setStyleSheet("font-size: 11px;")
+            top_row.addWidget(lbl_title)
+            i_layout.addLayout(top_row)
+
+            lbl_sign = QLabel(sign_desc)
+            lbl_sign.setStyleSheet("font-size: 11px; font-weight: 600; color: #CBD5E1;")
+            lbl_sign.setWordWrap(True)
+            i_layout.addWidget(lbl_sign)
+
+            lbl_act = QLabel(f"⚡ {motor_action}")
+            lbl_act.setStyleSheet("font-size: 10px; font-weight: 500; color: #64748B;")
+            lbl_act.setWordWrap(True)
+            i_layout.addWidget(lbl_act)
+
+            signs_grid.addWidget(item_card, row, col)
+            self.gesture_guide_cards[cmd_key] = item_card
+
+        guide_layout.addLayout(signs_grid)
+        left_layout.addWidget(guide_card)
         left_layout.addStretch()
 
         content_layout.addLayout(left_layout, stretch=4)
@@ -831,6 +900,18 @@ class MainWindow(QMainWindow):
                 btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none;")
             else:
                 btn.setStyleSheet("background-color: #18202D; color: #475569; border: 1px solid #232D3F;")
+
+        # Highlight Active Gesture Sign Card in Guide Matrix
+        for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
+            if cmd_key == active_car_cmd:
+                color = card.property("accent_color") or "#00E5FF"
+                card.setStyleSheet(
+                    f"background-color: #1E2838; border: 2px solid {color}; border-radius: 8px; padding: 5px 7px;"
+                )
+            else:
+                card.setStyleSheet(
+                    "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 6px 8px;"
+                )
 
     @Slot(dict)
     def _on_ws_radar_telemetry(self, data):
