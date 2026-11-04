@@ -26,13 +26,13 @@
 #define ENABLE_BLUETOOTH_SERIAL 0
 
 // L298N Motor Driver GPIO Pinout for ESP32
-#define ENA_PIN 25  // PWM Speed Left Motors
-#define IN1_PIN 27  // Direction Left 1
-#define IN2_PIN 14  // Direction Left 2
+#define ENA_PIN 25  // PWM Speed Left Motors (ENA)
+#define IN1_PIN 26  // Direction Left 1 (IN1)
+#define IN2_PIN 27  // Direction Left 2 (IN2)
 
-#define ENB_PIN 26  // PWM Speed Right Motors
-#define IN3_PIN 18  // Direction Right 1
-#define IN4_PIN 19  // Direction Right 2
+#define IN3_PIN 14  // Direction Right 1 (IN3)
+#define IN4_PIN 18  // Direction Right 2 (IN4)
+#define ENB_PIN 33  // PWM Speed Right Motors (ENB)
 
 // ESP32 LEDC PWM Hardware Timer & Power Calibration Settings
 #define PWM_FREQ 5000
