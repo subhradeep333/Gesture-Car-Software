@@ -3,14 +3,14 @@
 #include <esp_arduino_version.h>
 
 static int current_angle = 90;
-static int sweep_direction = 1;  // 1 = sweeping right to left, -1 = sweeping left to right
 static unsigned long last_servo_update = 0;
+static unsigned long last_serial_log = 0;
+static bool is_scanning_look_around = false;
 
 static float current_dist = 200.0f;
 static float left_dist = 200.0f;
 static float center_dist = 200.0f;
 static float right_dist = 200.0f;
-static float filtered_dist = 200.0f;
 
 static RadarData current_radar_data = {
     90, 200.0f, 200.0f, 200.0f, 200.0f, "CLEAR", "CENTER"
@@ -35,8 +35,12 @@ void updateServo(int angle) {
 }
 
 void initRadar() {
+    Serial.println("\n[RADAR] Initializing HC-SR04 Ultrasonic Radar & SG90 Servo...");
+    Serial.printf("[RADAR] Pin Config: TRIG=GPIO %d, ECHO=GPIO %d, SERVO=GPIO %d\n",
+                  TRIG_PIN, ECHO_PIN, SERVO_PIN);
+
     pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT_PULLDOWN);
+    pinMode(ECHO_PIN, INPUT);  // Standard INPUT (avoids pull-down degradation of HC-SR04 echo)
     digitalWrite(TRIG_PIN, LOW);
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
@@ -48,24 +52,35 @@ void initRadar() {
     ledcAttachPin(SERVO_PIN, PWM_CHANNEL_SERVO);
 #endif
 
+    // Park servo centered straight ahead at 90°
     updateServo(90);
-    delay(100);
+    delay(150);
+
+    // Initial test reading
+    float test_d = readDistance();
+    Serial.printf("[RADAR] Initial Distance Test: %.1f cm (Target: 90° Center)\n", test_d);
+    if (test_d >= ULTRASONIC_MAX_RANGE_CM) {
+        Serial.println("[RADAR] ⚠️ Note: Initial reading returned 200cm (Clear or No Echo).");
+        Serial.println("[RADAR] 💡 Ensure HC-SR04 VCC is connected to 5V (VIN), TRIG=5, ECHO=19.");
+    } else {
+        Serial.printf("[RADAR] ✅ Ultrasonic sensor working! Detected surface at %.1f cm\n", test_d);
+    }
 }
 
-float readDistance() {
-    // Ensure clean LOW state before trigger pulse
+static float readSingleDistance() {
+    // 1. Ensure clean LOW state before trigger pulse
     digitalWrite(TRIG_PIN, LOW);
     delayMicroseconds(4);
 
-    // Trigger 10us ultrasonic pulse on HC-SR04
+    // 2. Trigger 10us ultrasonic pulse on HC-SR04
     digitalWrite(TRIG_PIN, HIGH);
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
 
-    // Measure echo pulse width (timeout 25ms ~ 400cm max)
+    // 3. Measure echo pulse width (timeout 25000us ~ 400cm max range)
     unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000);
     if (duration == 0) {
-        return ULTRASONIC_MAX_RANGE_CM;  // No reflection -> Clear range
+        return ULTRASONIC_MAX_RANGE_CM;  // No reflection / timed out
     }
 
     float raw_cm = (float)duration * 0.0343f / 2.0f;
@@ -76,11 +91,25 @@ float readDistance() {
     return raw_cm;
 }
 
+float readDistance() {
+    // Dual-sample verification to eliminate false-clear dropouts
+    float d1 = readSingleDistance();
+    if (d1 < OBSTACLE_WARNING_CM) {
+        // Obstacle candidate detected: return immediately for fastest reaction
+        return d1;
+    }
+
+    // If first pulse timed out or returned > warning, sample once more 1.5ms later
+    delayMicroseconds(1500);
+    float d2 = readSingleDistance();
+    return min(d1, d2);
+}
+
 void detectObstacle() {
-    bool is_critical = (center_dist < OBSTACLE_VERY_CLOSE_CM) ||
-                       (abs(current_angle - 90) <= 20 && current_dist < OBSTACLE_VERY_CLOSE_CM);
-    bool is_warning = (center_dist < OBSTACLE_WARNING_CM) ||
-                      (abs(current_angle - 90) <= 25 && current_dist < OBSTACLE_WARNING_CM);
+    bool is_critical = (center_dist <= OBSTACLE_VERY_CLOSE_CM) ||
+                       (abs(current_angle - 90) <= 20 && current_dist <= OBSTACLE_VERY_CLOSE_CM);
+    bool is_warning = (center_dist <= OBSTACLE_WARNING_CM) ||
+                      (abs(current_angle - 90) <= 25 && current_dist <= OBSTACLE_WARNING_CM);
 
     if (is_critical) {
         strncpy(current_radar_data.status, "VERY CLOSE", sizeof(current_radar_data.status));
@@ -111,62 +140,64 @@ void detectObstacle() {
 }
 
 void scanEnvironment() {
+    if (is_scanning_look_around) {
+        return;  // Look-around sweep is currently handling servo movement
+    }
+
     unsigned long now = millis();
-    if (now - last_servo_update < SERVO_STEP_INTERVAL_MS) {
-        return;  // Non-blocking timing tick
+    if (now - last_servo_update < 40) {  // 25 Hz high-frequency distance sampling
+        return;
     }
     last_servo_update = now;
 
-    // Continuous smooth radar sweeping across front hemisphere (40° -> 140° -> 40°)
-    current_angle += (sweep_direction * SERVO_SWEEP_STEP_DEG);
-    if (current_angle >= SERVO_MAX_ANGLE) {
-        current_angle = SERVO_MAX_ANGLE;
-        sweep_direction = -1;
-    } else if (current_angle <= SERVO_MIN_ANGLE) {
-        current_angle = SERVO_MIN_ANGLE;
-        sweep_direction = 1;
+    // Normal State: Park servo centered straight ahead at 90° to monitor vehicle travel path
+    if (current_angle != 90) {
+        updateServo(90);
     }
-    updateServo(current_angle);
 
-    // Read distance at current angle
     current_dist = readDistance();
-
-    // Map measurements into respective sector memories
-    if (current_angle >= 115) {
-        left_dist = (0.7f * current_dist) + (0.3f * left_dist);
-    } else if (current_angle <= 65) {
-        right_dist = (0.7f * current_dist) + (0.3f * right_dist);
-    } else if (current_angle >= 80 && current_angle <= 100) {
-        center_dist = (0.7f * current_dist) + (0.3f * center_dist);
-    }
+    center_dist = current_dist;  // Instant front distance update (no artificial lag)
 
     detectObstacle();
+
+    // Periodic Serial Monitor heartbeat (every 1.0s or immediately on obstacle)
+    if ((now - last_serial_log >= 1000) || (current_dist < OBSTACLE_WARNING_CM && now - last_serial_log >= 250)) {
+        last_serial_log = now;
+        Serial.printf("[RADAR] Angle: %d° | Front Dist: %.1f cm | Status: %s | Best: %s\n",
+                      current_angle, current_dist, current_radar_data.status, current_radar_data.best_path);
+    }
 }
 
 void performScanLookAround(float &out_left, float &out_center, float &out_right, char* out_best_path) {
+    is_scanning_look_around = true;
+    Serial.println("\n[RADAR] 🚨 Obstacle detected! Halting and performing look-around sweep...");
+
     // 1. Move servo to RIGHT (40°) & sample clear space
     updateServo(40);
-    delay(240);
+    delay(260);
     out_right = readDistance();
     delay(20);
     float r2 = readDistance();
     out_right = min(out_right, r2);
+    Serial.printf("[RADAR] -> RIGHT Clearance (40°): %.1f cm\n", out_right);
 
     // 2. Move servo to LEFT (140°) & sample clear space
     updateServo(140);
-    delay(280);
+    delay(320);
     out_left = readDistance();
     delay(20);
     float l2 = readDistance();
     out_left = min(out_left, l2);
+    Serial.printf("[RADAR] -> LEFT Clearance (140°): %.1f cm\n", out_left);
 
     // 3. Return servo to CENTER (90°) & sample front clearance
     updateServo(90);
-    delay(240);
+    delay(260);
     out_center = readDistance();
     delay(20);
     float c2 = readDistance();
     out_center = min(out_center, c2);
+    Serial.printf("[RADAR] -> CENTER Clearance (90°): %.1f cm\n", out_center);
 
     // Update memory registers
     left_dist = out_left;
@@ -188,12 +219,14 @@ void performScanLookAround(float &out_left, float &out_center, float &out_right,
         strncpy(out_best_path, "BACKWARD", 16);
     }
 
+    Serial.printf("[RADAR] -> Decision: Divert to %s (L=%.1f, R=%.1f)\n\n", out_best_path, out_left, out_right);
+
     detectObstacle();
+    is_scanning_look_around = false;
 }
 
 bool isFrontBlocked() {
-    return (center_dist < OBSTACLE_WARNING_CM) ||
-           (abs(current_angle - 90) <= 20 && current_dist < OBSTACLE_WARNING_CM);
+    return (center_dist <= OBSTACLE_WARNING_CM) || (current_dist <= OBSTACLE_WARNING_CM);
 }
 
 RadarData getRadarData() {
