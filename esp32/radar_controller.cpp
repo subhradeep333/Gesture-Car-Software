@@ -35,12 +35,16 @@ void updateServo(int angle) {
 }
 
 void initRadar() {
-    Serial.println("\n[RADAR] Initializing HC-SR04 Ultrasonic Radar & SG90 Servo...");
-    Serial.printf("[RADAR] Pin Config: TRIG=GPIO %d, ECHO=GPIO %d, SERVO=GPIO %d\n",
+    Serial.println("\n=======================================================");
+    Serial.println("  [RADAR] Initializing Ultrasonic Obstacle Subsystem  ");
+    Serial.println("=======================================================");
+    Serial.printf("[RADAR] Pins: TRIG=GPIO %d, ECHO=GPIO %d, SERVO=GPIO %d\n",
                   TRIG_PIN, ECHO_PIN, SERVO_PIN);
+    Serial.printf("[RADAR] Warning Threshold: %.0f cm | Critical Threshold: %.0f cm\n",
+                  OBSTACLE_WARNING_CM, OBSTACLE_VERY_CLOSE_CM);
 
     pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);  // Standard INPUT (avoids pull-down degradation of HC-SR04 echo)
+    pinMode(ECHO_PIN, INPUT);  // Standard INPUT (avoids pull-down degradation of echo pulse)
     digitalWrite(TRIG_PIN, LOW);
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
@@ -54,35 +58,58 @@ void initRadar() {
 
     // Park servo centered straight ahead at 90°
     updateServo(90);
-    delay(150);
+    delay(200);
 
-    // Initial test reading
+    // Initial test reading with direct timing
     float test_d = readDistance();
     Serial.printf("[RADAR] Initial Distance Test: %.1f cm (Target: 90° Center)\n", test_d);
     if (test_d >= ULTRASONIC_MAX_RANGE_CM) {
-        Serial.println("[RADAR] ⚠️ Note: Initial reading returned 200cm (Clear or No Echo).");
-        Serial.println("[RADAR] 💡 Ensure HC-SR04 VCC is connected to 5V (VIN), TRIG=5, ECHO=19.");
+        Serial.println("[RADAR] ℹ️ Initial reading is 200cm (Clear / No close obstacle in front).");
     } else {
-        Serial.printf("[RADAR] ✅ Ultrasonic sensor working! Detected surface at %.1f cm\n", test_d);
+        Serial.printf("[RADAR] ✅ Obstacle detected on startup at %.1f cm!\n", test_d);
     }
 }
 
-static float readSingleDistance() {
-    // 1. Ensure clean LOW state before trigger pulse
+/**
+ * Microsecond-accurate direct polling measurement for HC-SR04 on ESP32.
+ * Completely eliminates pulseIn() Core scheduler desync and task-switching lockups.
+ */
+static float readSingleDistanceDirect() {
+    // 1. Wait for ECHO pin to be LOW if a previous bounce is lingering
+    unsigned long wait_low = micros();
+    while (digitalRead(ECHO_PIN) == HIGH) {
+        if (micros() - wait_low > 3000) {
+            return ULTRASONIC_MAX_RANGE_CM;
+        }
+    }
+
+    // 2. Clean 4µs LOW, then 10µs HIGH trigger pulse
     digitalWrite(TRIG_PIN, LOW);
     delayMicroseconds(4);
-
-    // 2. Trigger 10us ultrasonic pulse on HC-SR04
     digitalWrite(TRIG_PIN, HIGH);
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
 
-    // 3. Measure echo pulse width (timeout 25000us ~ 400cm max range)
-    unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000);
-    if (duration == 0) {
-        return ULTRASONIC_MAX_RANGE_CM;  // No reflection / timed out
+    // 3. Wait for ECHO to rise HIGH (sensor transmission response)
+    // HC-SR04 emits 8x 40kHz pulses and raises ECHO (~200-400µs). Timeout after 4ms.
+    unsigned long wait_high = micros();
+    while (digitalRead(ECHO_PIN) == LOW) {
+        if (micros() - wait_high > 4000) {
+            return ULTRASONIC_MAX_RANGE_CM;  // No echo signal received
+        }
     }
 
+    // 4. Measure duration while ECHO is HIGH
+    // 25,000 µs = ~430 cm maximum distance range
+    unsigned long pulse_start = micros();
+    while (digitalRead(ECHO_PIN) == HIGH) {
+        if (micros() - pulse_start > 25000) {
+            return ULTRASONIC_MAX_RANGE_CM;  // Out of range (> 400cm)
+        }
+    }
+    unsigned long duration = micros() - pulse_start;
+
+    // 5. Convert to distance in cm: duration (µs) * speed of sound (0.0343 cm/µs) / 2
     float raw_cm = (float)duration * 0.0343f / 2.0f;
     if (raw_cm < 2.0f || raw_cm > ULTRASONIC_MAX_RANGE_CM) {
         return ULTRASONIC_MAX_RANGE_CM;
@@ -92,16 +119,16 @@ static float readSingleDistance() {
 }
 
 float readDistance() {
-    // Dual-sample verification to eliminate false-clear dropouts
-    float d1 = readSingleDistance();
-    if (d1 < OBSTACLE_WARNING_CM) {
-        // Obstacle candidate detected: return immediately for fastest reaction
+    // Dual-sample verification to eliminate single-pulse acoustic dropouts
+    float d1 = readSingleDistanceDirect();
+    if (d1 <= OBSTACLE_WARNING_CM) {
+        // Confirmed obstacle in warning/critical zone: return immediately for zero-lag response!
         return d1;
     }
 
-    // If first pulse timed out or returned > warning, sample once more 1.5ms later
-    delayMicroseconds(1500);
-    float d2 = readSingleDistance();
+    // If first pulse was clear (>28cm or 200cm), take a quick 2nd reading 6ms later
+    delay(6);
+    float d2 = readSingleDistanceDirect();
     return min(d1, d2);
 }
 
@@ -160,21 +187,21 @@ void scanEnvironment() {
 
     detectObstacle();
 
-    // Periodic Serial Monitor heartbeat (every 1.0s or immediately on obstacle)
-    if ((now - last_serial_log >= 1000) || (current_dist < OBSTACLE_WARNING_CM && now - last_serial_log >= 250)) {
+    // Periodic Serial Monitor heartbeat (every 800ms or immediately when obstacle appears)
+    if ((now - last_serial_log >= 800) || (current_dist <= OBSTACLE_WARNING_CM && now - last_serial_log >= 200)) {
         last_serial_log = now;
-        Serial.printf("[RADAR] Angle: %d° | Front Dist: %.1f cm | Status: %s | Best: %s\n",
+        Serial.printf("[RADAR] Angle: %d° | Front Dist: %.1f cm | Status: %s | Best Path: %s\n",
                       current_angle, current_dist, current_radar_data.status, current_radar_data.best_path);
     }
 }
 
 void performScanLookAround(float &out_left, float &out_center, float &out_right, char* out_best_path) {
     is_scanning_look_around = true;
-    Serial.println("\n[RADAR] 🚨 Obstacle detected! Halting and performing look-around sweep...");
+    Serial.println("\n[RADAR] 🚨 Obstacle detected! Halting vehicle and performing look-around sweep...");
 
     // 1. Move servo to RIGHT (40°) & sample clear space
     updateServo(40);
-    delay(260);
+    delay(280);
     out_right = readDistance();
     delay(20);
     float r2 = readDistance();
@@ -183,7 +210,7 @@ void performScanLookAround(float &out_left, float &out_center, float &out_right,
 
     // 2. Move servo to LEFT (140°) & sample clear space
     updateServo(140);
-    delay(320);
+    delay(340);
     out_left = readDistance();
     delay(20);
     float l2 = readDistance();
@@ -192,7 +219,7 @@ void performScanLookAround(float &out_left, float &out_center, float &out_right,
 
     // 3. Return servo to CENTER (90°) & sample front clearance
     updateServo(90);
-    delay(260);
+    delay(280);
     out_center = readDistance();
     delay(20);
     float c2 = readDistance();
