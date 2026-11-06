@@ -328,66 +328,61 @@ class MainWindow(QMainWindow):
 
         # Header with title & helpful tip
         g_hdr = QHBoxLayout()
-        g_title = QLabel("✋ GESTURE SIGNS & CONTROL REFERENCE")
+        g_title = QLabel("✌️ ACTIVE GESTURE CONTROL")
         g_title.setProperty("class", "SectionHeader")
         g_hdr.addWidget(g_title)
 
-        g_tip = QLabel("Live Recognition Feedback")
-        g_tip.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B;")
+        g_tip = QLabel("Return-To-Home")
+        g_tip.setStyleSheet("font-size: 11px; font-weight: 600; color: #00E5FF;")
         g_hdr.addWidget(g_tip, alignment=Qt.AlignRight)
         guide_layout.addLayout(g_hdr)
 
-        # Grid layout for 6 gesture signs
-        signs_grid = QGridLayout()
-        signs_grid.setSpacing(8)
-
         self.gesture_guide_cards = {}
 
-        gesture_cards_data = [
-            # (row, col, cmd_key, icon, title, sign_desc, motor_action, hex_color)
-            (0, 0, config.CMD_FORWARD, "☝️", "FORWARD", "Index finger pointing UP", "Both motors drive forward", "#2ECC71"),
-            (0, 1, config.CMD_STOP, "✋", "STOP", "Open flat palm facing camera", "Smooth zero-PWM stop", "#E67E22"),
-            (0, 2, config.CMD_EMERGENCY_STOP, "✊", "EMERGENCY", "Closed fist tightly curled", "Instant hardware brake lock", "#E74C3C"),
-            (1, 0, config.CMD_LEFT, "👈", "LEFT", "Index finger pointing LEFT", "Skid-steer left turn", "#F39C12"),
-            (1, 1, config.CMD_BACKWARD, "👇", "BACKWARD", "Index finger pointing DOWN", "Both motors reverse drive", "#3498DB"),
-            (1, 2, config.CMD_RIGHT, "👉", "RIGHT", "Index finger pointing RIGHT", "Skid-steer right turn", "#9B59B6"),
-            (2, 0, config.CMD_RETURN_HOME, "✌️", "RETURN HOME", "Two fingers up (V-sign)", "Calls car back to starting position (0, 0)", "#00E5FF"),
-        ]
+        # Dedicated Active Gesture Card: ✌️ Return To Start
+        item_card = QFrame()
+        item_card.setProperty("accent_color", "#00E5FF")
+        item_card.setStyleSheet(
+            "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 10px 12px;"
+        )
+        i_layout = QVBoxLayout(item_card)
+        i_layout.setContentsMargins(8, 8, 8, 8)
+        i_layout.setSpacing(4)
 
-        for row, col, cmd_key, icon, title, sign_desc, motor_action, hex_col in gesture_cards_data:
-            item_card = QFrame()
-            item_card.setProperty("accent_color", hex_col)
-            item_card.setStyleSheet(
-                "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 6px 8px;"
-            )
-            i_layout = QVBoxLayout(item_card)
-            i_layout.setContentsMargins(6, 6, 6, 6)
-            i_layout.setSpacing(2)
+        top_row = QHBoxLayout()
+        lbl_title = QLabel("✌️ <span style='color: #00E5FF; font-weight: 800; font-size: 13px;'>RETURN TO START (HOMING)</span> <span style='color: #64748B; font-size: 11px;'>[H]</span>")
+        lbl_title.setTextFormat(Qt.RichText)
+        top_row.addWidget(lbl_title)
+        i_layout.addLayout(top_row)
 
-            top_row = QHBoxLayout()
-            lbl_title = QLabel(f"{icon} <span style='color: {hex_col}; font-weight: 800;'>{title}</span> <span style='color: #64748B; font-size: 10px;'>[{cmd_key}]</span>")
-            lbl_title.setTextFormat(Qt.RichText)
-            lbl_title.setStyleSheet("font-size: 11px;")
-            top_row.addWidget(lbl_title)
-            i_layout.addLayout(top_row)
+        lbl_sign = QLabel("Two fingers held up (V-Sign / Peace Sign)")
+        lbl_sign.setStyleSheet("font-size: 12px; font-weight: 600; color: #F8FAFC;")
+        lbl_sign.setWordWrap(True)
+        i_layout.addWidget(lbl_sign)
 
-            lbl_sign = QLabel(sign_desc)
-            lbl_sign.setStyleSheet("font-size: 11px; font-weight: 600; color: #CBD5E1;")
-            lbl_sign.setWordWrap(True)
-            i_layout.addWidget(lbl_sign)
+        lbl_act = QLabel("⚡ Autonomous closed-loop homing: calls robotic car back to start coordinate (0, 0)")
+        lbl_act.setStyleSheet("font-size: 11px; font-weight: 500; color: #38BDF8;")
+        lbl_act.setWordWrap(True)
+        i_layout.addWidget(lbl_act)
 
-            lbl_act = QLabel(f"⚡ {motor_action}")
-            lbl_act.setStyleSheet("font-size: 10px; font-weight: 500; color: #64748B;")
-            lbl_act.setWordWrap(True)
-            i_layout.addWidget(lbl_act)
+        self.gesture_guide_cards[config.CMD_RETURN_HOME] = item_card
+        guide_layout.addWidget(item_card)
 
-            if cmd_key == config.CMD_RETURN_HOME:
-                signs_grid.addWidget(item_card, row, col, 1, 3)
-            else:
-                signs_grid.addWidget(item_card, row, col)
-            self.gesture_guide_cards[cmd_key] = item_card
+        # Informational Note: Manual directional gestures disabled
+        note_card = QFrame()
+        note_card.setStyleSheet("background-color: #0F172A; border: 1px dashed #334155; border-radius: 8px; padding: 8px 10px;")
+        n_layout = QVBoxLayout(note_card)
+        n_layout.setContentsMargins(6, 6, 6, 6)
+        n_layout.setSpacing(2)
+        n_title = QLabel("🤖 Autonomous Navigation Mode")
+        n_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #94A3B8;")
+        n_desc = QLabel("All directional hand gestures (pointing, fist, palm) have been cleared. Autonomous mapping guides the vehicle, and ✌️ returns the car home.")
+        n_desc.setStyleSheet("font-size: 10px; color: #64748B;")
+        n_desc.setWordWrap(True)
+        n_layout.addWidget(n_title)
+        n_layout.addWidget(n_desc)
+        guide_layout.addWidget(note_card)
 
-        guide_layout.addLayout(signs_grid)
         left_layout.addWidget(guide_card)
         left_layout.addStretch()
 
@@ -1216,14 +1211,21 @@ class MainWindow(QMainWindow):
 
         # Highlight Active Gesture Sign Card in Guide Matrix
         for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
-            if cmd_key == active_car_cmd:
+            is_active = (
+                cmd_key == active_car_cmd
+                or (cmd_key == config.CMD_RETURN_HOME and (
+                    candidate_gesture == config.CMD_RETURN_HOME
+                    or self.autonomous_navigator.current_state == AutonomousNavigator.STATE_HOMING
+                ))
+            )
+            if is_active:
                 color = card.property("accent_color") or "#00E5FF"
                 card.setStyleSheet(
-                    f"background-color: #1E2838; border: 2px solid {color}; border-radius: 8px; padding: 5px 7px;"
+                    f"background-color: #1E2838; border: 2px solid {color}; border-radius: 8px; padding: 10px 12px;"
                 )
             else:
                 card.setStyleSheet(
-                    "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 6px 8px;"
+                    "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 10px 12px;"
                 )
 
     @Slot(dict)

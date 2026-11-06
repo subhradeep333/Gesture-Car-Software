@@ -41,17 +41,15 @@ CAR (ESP32 Controller)
 
 ---
 
-## ✋ Gesture Mapping Table
+## ✌️ Active Hand Gesture (Return-To-Home)
 
-| Gesture | Command | Code | Motor Action | Visual Feedback |
+All manual directional steering hand gestures (pointing, fist, palm) have been cleared to give full priority to the autonomous navigation & 2D mapping engine.
+
+| Gesture | Command | Code | Action | Visual Feedback |
 | :--- | :--- | :---: | :--- | :--- |
-| ☝️ **One Finger Up** | FORWARD | `F` | Both left & right motors drive forward | Emerald Green badge |
-| 👇 **One Finger Down** | BACKWARD | `B` | Both left & right motors drive in reverse | Blue badge |
-| 👈 **Pointing Left** | LEFT | `L` | Left wheels reverse, right wheels drive forward | Orange badge |
-| 👉 **Pointing Right** | RIGHT | `R` | Left wheels drive forward, right wheels reverse | Purple badge |
-| ✋ **Open Palm** | STOP | `S` | All motor PWM set to 0 (Smooth Stop) | Amber badge |
-| ✊ **Closed Fist** | EMERGENCY STOP | `E` | Immediate emergency brake & lock | Red badge |
-| ✌️ **Two Fingers (V-Sign)** | RETURN HOME | `H` | Autonomously navigates back to origin $(0, 0)$ | Cyan badge |
+| ✌️ **Two Fingers (V-Sign / Peace Sign)** | RETURN HOME | `H` | Autonomously calculates angle & drives back to starting coordinate $(0, 0)$ | Cyan badge & glowing card |
+
+> **Note:** The robot navigates autonomously using its servo-mounted ultrasonic sensor. Showing ✌️ at any point summons the car back to where it started. Manual directional buttons remain available in the UI for bench testing.
 
 ---
 

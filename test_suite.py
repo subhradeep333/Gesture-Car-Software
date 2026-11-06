@@ -120,45 +120,45 @@ def run_all_tests():
     record_test("Multi-Hand Selection: Center Proximity Prioritization", best_idx == 1)
 
     # --------------------------------------------------------------------------
-    # SUITE 3: GESTURE CLASSIFIER GEOMETRY ENGINE
+    # SUITE 3: GESTURE CLASSIFIER GEOMETRY ENGINE (SOLE ACTIVE GESTURE: ✌️ RETURN HOME)
     # --------------------------------------------------------------------------
     print("\n--- [SUITE 3] Gesture Classification Geometry Engine ---")
     classifier = GestureClassifier()
 
-    # 1. Closed Fist (Emergency Stop - E)
+    # 1. Closed Fist -> Cleared (Returns 'UNKNOWN')
     fist_landmarks = [(0.5, 0.8, 0.0)] + [(0.5, 0.7, 0.0)] * 20
     c_fist = classifier.classify_frame(True, fist_landmarks, 0.95)
-    record_test("Fist (Emergency Stop 'E') Classification", c_fist == config.CMD_EMERGENCY_STOP)
+    record_test("Fist Cleared (Returns 'UNKNOWN')", c_fist == "UNKNOWN")
 
-    # 2. Open Palm (Stop - S)
+    # 2. Open Palm -> Cleared (Returns 'UNKNOWN')
     c_palm = classifier.classify_frame(True, palm_landmarks, 0.95)
-    record_test("Open Palm (Stop 'S') Classification", c_palm == config.CMD_STOP)
+    record_test("Open Palm Cleared (Returns 'UNKNOWN')", c_palm == "UNKNOWN")
 
-    # 3. One Finger Up (Forward - F)
+    # 3. One Finger Up -> Cleared (Returns 'UNKNOWN')
     fwd_landmarks = list(palm_landmarks)
     fwd_landmarks[12] = (0.5, 0.48, 0.0)  # middle_tip curled
     fwd_landmarks[16] = (0.6, 0.48, 0.0)  # ring_tip curled
     fwd_landmarks[20] = (0.7, 0.48, 0.0)  # pinky_tip curled
     c_fwd = classifier.classify_frame(True, fwd_landmarks, 0.95)
-    record_test("Pointing Up (Forward 'F') Classification", c_fwd == config.CMD_FORWARD)
+    record_test("Pointing Up Cleared (Returns 'UNKNOWN')", c_fwd == "UNKNOWN")
 
-    # 4. Pointing Left (Left - L)
+    # 4. Pointing Left -> Cleared (Returns 'UNKNOWN')
     left_landmarks = list(fwd_landmarks)
     left_landmarks[8] = (0.1, 0.5, 0.0)
     c_left = classifier.classify_frame(True, left_landmarks, 0.95)
-    record_test("Pointing Left (Left 'L') Classification", c_left == config.CMD_LEFT)
+    record_test("Pointing Left Cleared (Returns 'UNKNOWN')", c_left == "UNKNOWN")
 
-    # 5. Pointing Right (Right - R)
+    # 5. Pointing Right -> Cleared (Returns 'UNKNOWN')
     right_landmarks = list(fwd_landmarks)
     right_landmarks[8] = (0.8, 0.5, 0.0)
     c_right = classifier.classify_frame(True, right_landmarks, 0.95)
-    record_test("Pointing Right (Right 'R') Classification", c_right == config.CMD_RIGHT)
+    record_test("Pointing Right Cleared (Returns 'UNKNOWN')", c_right == "UNKNOWN")
 
-    # 6. Pointing Down (Backward - B)
+    # 6. Pointing Down -> Cleared (Returns 'UNKNOWN')
     back_landmarks = list(fwd_landmarks)
     back_landmarks[8] = (0.4, 0.9, 0.0)
     c_back = classifier.classify_frame(True, back_landmarks, 0.95)
-    record_test("Pointing Down (Backward 'B') Classification", c_back == config.CMD_BACKWARD)
+    record_test("Pointing Down Cleared (Returns 'UNKNOWN')", c_back == "UNKNOWN")
 
     # 7. 3D Joint Angle Cosine Verification
     cos_straight = classifier._compute_joint_angle_cos((0.4, 0.5, 0.0), (0.4, 0.4, 0.0), (0.4, 0.2, 0.0))
@@ -176,30 +176,23 @@ def run_all_tests():
     record_test("Undetected Hand Returns 'NONE'", c_none == "NONE")
     record_test("Low Confidence Hand Returns 'UNKNOWN'", c_low_conf == "UNKNOWN")
 
-    # 10. Peace Sign (✌️) -> Return-To-Home (CMD_RETURN_HOME 'H')
+    # 10. Peace Sign (✌️) -> Sole Active Gesture: Return-To-Home (CMD_RETURN_HOME 'H')
     peace_landmarks = list(palm_landmarks)
     peace_landmarks[16] = (0.58, 0.48, 0.0)  # ring finger curled
     peace_landmarks[20] = (0.66, 0.48, 0.0)  # pinky finger curled
     c_peace = classifier.classify_frame(True, peace_landmarks, 0.95)
-    record_test("Two Fingers Up / Peace Sign Calls Car to Start ('H')", c_peace == config.CMD_RETURN_HOME)
+    record_test("Two Fingers Up (✌️) Calls Car to Start ('H')", c_peace == config.CMD_RETURN_HOME)
 
-    # 11. Directional Angular Deadband & Hysteresis Stability
-    classifier.last_directional_command = config.CMD_FORWARD
-    hyst_fwd_landmarks = list(fwd_landmarks)
-    hyst_fwd_landmarks[8] = (0.7, 0.2, 0.0)  # Tilted forward-right
-    c_hyst = classifier.classify_frame(True, hyst_fwd_landmarks, 0.95)
-    record_test("Directional Angular Deadband Boundary Stability", c_hyst in [config.CMD_FORWARD, config.CMD_RIGHT])
+    # 11. Sole Active Gesture: 2-Frame Hysteresis for Peace Sign (✌️)
+    classifier.frame_buffer.clear()
+    c1, s1, is1 = classifier.process(True, peace_landmarks, 0.95)
+    record_test("Peace Sign Frame 1 Buffering", s1 == config.CMD_STOP and is1 is False)
+    c2, s2, is2 = classifier.process(True, peace_landmarks, 0.95)
+    record_test("Peace Sign Frame 2 Activation (CMD_RETURN_HOME)", s2 == config.CMD_RETURN_HOME and is2 is True)
 
-    # 12. Fast-Path Emergency Stop Instant Override (1 frame)
-    c_cand, c_stable, is_st = classifier.process(True, fist_landmarks, 0.95)
-    record_test("Fast-Path Emergency Stop Instant Override", c_stable == config.CMD_EMERGENCY_STOP and is_st is True)
-
-    # 13. Fast-Path Open Palm Stop (2 frames)
-    classifier.set_stability_threshold(5)
-    classifier.current_stable_command = config.CMD_FORWARD
-    classifier.process(True, palm_landmarks, 0.95)
-    _, c_stop_2, is_st_2 = classifier.process(True, palm_landmarks, 0.95)
-    record_test("Fast Open-Palm Stop Activation within 2 Frames", c_stop_2 == config.CMD_STOP and is_st_2 is True)
+    # 12. Non-peace gestures keep robot safely stopped
+    c_non, s_non, is_non = classifier.process(True, fist_landmarks, 0.95)
+    record_test("Cleared gestures keep robot safely stopped", s_non == config.CMD_STOP and is_non is True)
 
     # --------------------------------------------------------------------------
     # SUITE 4: CENTRALIZED SAFETY RULES ENGINE & FAULT PRIORITIES
