@@ -56,8 +56,13 @@ class AutonomousNavigator(QObject):
         self.action_start_time = time.time()
         self.action_duration = 0.0
         self.active_command = 'S'
+        self.current_speed = 200
         self.turn_direction = 'L'
         self.sweep_cycles_done = 0
+
+        # Heartbeat timer for ESP32 500ms hardware watchdog keep-alive
+        self.last_heartbeat_time = 0.0
+        self.heartbeat_interval = 0.20  # Send keep-alive every 200ms
 
         # High-frequency decision loop timer (50ms ~ 20 Hz)
         self.timer = QTimer(self)
@@ -139,9 +144,11 @@ class AutonomousNavigator(QObject):
             self.current_state = new_state
             self.state_changed.emit(new_state)
 
-    def _dispatch_command(self, cmd_char, speed=config.DEFAULT_MOTOR_SPEED):
+    def _dispatch_command(self, cmd_char, speed=200):
         """Dispatches movement command to ESP32 and notifies odometry tracker."""
         self.active_command = cmd_char
+        self.current_speed = speed
+        self.last_heartbeat_time = time.time()
         if self.websocket_manager and self.websocket_manager.is_connected:
             self.websocket_manager.send_command(cmd_char, speed=speed)
         self.mapping_engine.update_odometry(cmd_char)
@@ -158,6 +165,12 @@ class AutonomousNavigator(QObject):
 
         if self.current_mode != self.MODE_AUTONOMOUS or not self.is_active:
             return
+
+        # Keep-alive heartbeat: prevent ESP32 500ms safety watchdog timeout while driving
+        if self.active_command != config.CMD_STOP and (now - self.last_heartbeat_time) >= self.heartbeat_interval:
+            self.last_heartbeat_time = now
+            if self.websocket_manager and self.websocket_manager.is_connected:
+                self.websocket_manager.send_command(self.active_command, speed=self.current_speed)
 
         elapsed = now - self.action_start_time
 
@@ -177,8 +190,8 @@ class AutonomousNavigator(QObject):
                     # Clear ahead: Explore forward!
                     self._set_state(self.STATE_EXPLORING)
                     self.action_start_time = now
-                    self.action_duration = 0.8  # Move forward in 800ms pulses
-                    self._dispatch_command(config.CMD_FORWARD, speed=165)
+                    self.action_duration = 0.9  # Move forward in steady 900ms pulses
+                    self._dispatch_command(config.CMD_FORWARD, speed=200)
                     self.status_message.emit("Path clear. Exploring forward...")
                 else:
                     # Obstacle ahead: Determine best turning direction
@@ -195,8 +208,8 @@ class AutonomousNavigator(QObject):
                 # Obstacle is critically close! Emergency halt & back up
                 self._set_state(self.STATE_BACKING)
                 self.action_start_time = now
-                self.action_duration = 0.45  # Reverse for 450ms
-                self._dispatch_command(config.CMD_BACKWARD, speed=170)
+                self.action_duration = 0.5  # Reverse for 500ms
+                self._dispatch_command(config.CMD_BACKWARD, speed=210)
                 self.status_message.emit("Critical proximity detected! Reversing...")
                 return
 
@@ -252,7 +265,8 @@ class AutonomousNavigator(QObject):
 
         self._set_state(self.STATE_TURNING)
         self.action_start_time = time.time()
-        # Rotate for ~500ms (~60° - 75° pivot)
+        # Rotate for ~550ms (~65° - 80° pivot)
         self.action_duration = 0.55
-        self._dispatch_command(self.turn_direction, speed=180)
+        self._dispatch_command(self.turn_direction, speed=210)
         self.status_message.emit(f"Obstacle ahead. Turning {turn_name} toward open space...")
+
