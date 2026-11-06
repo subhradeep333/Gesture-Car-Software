@@ -103,41 +103,56 @@ static inline void setMotorDirection(bool in1, bool in2, bool in3, bool in4) {
 void moveForward(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
+    current_speed_ena = speed;
+    current_speed_enb = speed;
 
     setMotorDirection(HIGH, LOW, HIGH, LOW);
+    applyHardwarePwm(speed, speed);
 }
 
 void moveBackward(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
+    current_speed_ena = speed;
+    current_speed_enb = speed;
 
     setMotorDirection(LOW, HIGH, LOW, HIGH);
+    applyHardwarePwm(speed, speed);
 }
 
 void turnLeft(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
+    current_speed_ena = speed;
+    current_speed_enb = speed;
 
     // Skid Steer Left: Left wheels reverse, Right wheels forward
     setMotorDirection(LOW, HIGH, HIGH, LOW);
+    applyHardwarePwm(speed, speed);
 }
 
 void turnRight(uint8_t speed) {
     target_speed_ena = speed;
     target_speed_enb = speed;
+    current_speed_ena = speed;
+    current_speed_enb = speed;
 
     // Skid Steer Right: Left wheels forward, Right wheels reverse
     setMotorDirection(HIGH, LOW, LOW, HIGH);
+    applyHardwarePwm(speed, speed);
 }
 
 void stopMotors() {
     target_speed_ena = 0;
     target_speed_enb = 0;
+    current_speed_ena = 0;
+    current_speed_enb = 0;
 
     digitalWrite(IN1_PIN, LOW);
     digitalWrite(IN2_PIN, LOW);
     digitalWrite(IN3_PIN, LOW);
     digitalWrite(IN4_PIN, LOW);
+    applyHardwarePwm(0, 0);
 }
 
 void emergencyStop() {

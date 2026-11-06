@@ -67,31 +67,36 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             switch (cmd) {
                 case 'F':
                     if (isFrontBlocked()) {
-                        Serial.println("[WS] Forward path blocked! Halting to scan for open space...");
+                        Serial.println("[WS] Forward path blocked! Halting to divert direction...");
                         stopMotors();
-                        current_active_cmd = 'S';
+                        resetSafetyWatchdog();
 
                         float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
                         char best_path[16] = "CENTER";
                         performScanLookAround(d_left, d_center, d_right, best_path);
+                        resetSafetyWatchdog();
 
                         Serial.printf("[WS] Look-around scan results: L=%.1f, C=%.1f, R=%.1f -> Best: %s\n",
                                       d_left, d_center, d_right, best_path);
 
                         if (strcmp(best_path, "LEFT") == 0) {
-                            turnLeft(speed);
-                            delay(450);
+                            turnLeft(215);
+                            delay(600);
                             stopMotors();
                         } else if (strcmp(best_path, "RIGHT") == 0) {
-                            turnRight(speed);
-                            delay(450);
+                            turnRight(215);
+                            delay(600);
                             stopMotors();
                         } else {
-                            moveBackward(speed);
+                            moveBackward(215);
                             delay(500);
+                            turnLeft(215);
+                            delay(600);
                             stopMotors();
                         }
 
+                        resetSafetyWatchdog();
+                        current_active_cmd = 'S';
                         sendTelemetry(num, "OBSTACLE_DIVERTED");
                         return;
                     } else {
@@ -131,36 +136,45 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void checkAutonomousObstacleAvoidance() {
     // If car is currently driving FORWARD ('F') and an obstacle appears in front
     if (current_active_cmd == 'F' && isFrontBlocked()) {
-        Serial.println("[AUTO-AVOID] Obstacle ahead! Halting car to scan surroundings...");
+        Serial.println("[AUTO-AVOID] Obstacle ahead! Stopping car to divert direction...");
         stopMotors();
-        current_active_cmd = 'S';
+        resetSafetyWatchdog();
 
         float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
         char best_path[16] = "CENTER";
         performScanLookAround(d_left, d_center, d_right, best_path);
+        resetSafetyWatchdog();
 
         Serial.printf("[AUTO-AVOID] Look-around scan results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best: %s\n",
                       d_left, d_center, d_right, best_path);
 
+        // Turn towards the open space with full skid-steer torque (215 PWM, 600ms)
         if (strcmp(best_path, "LEFT") == 0) {
-            Serial.println("[AUTO-AVOID] Diverting route to LEFT empty space...");
-            turnLeft(200);
-            delay(450);
+            Serial.println("[AUTO-AVOID] Diverting direction to LEFT...");
+            turnLeft(215);
+            delay(600);
             stopMotors();
-            current_active_cmd = 'S';
         } else if (strcmp(best_path, "RIGHT") == 0) {
-            Serial.println("[AUTO-AVOID] Diverting route to RIGHT empty space...");
-            turnRight(200);
-            delay(450);
+            Serial.println("[AUTO-AVOID] Diverting direction to RIGHT...");
+            turnRight(215);
+            delay(600);
             stopMotors();
-            current_active_cmd = 'S';
         } else {
-            Serial.println("[AUTO-AVOID] Both sides blocked! Reversing for clearance...");
-            moveBackward(200);
+            Serial.println("[AUTO-AVOID] Both sides blocked! Reversing and turning...");
+            moveBackward(215);
             delay(500);
+            turnLeft(215);
+            delay(600);
             stopMotors();
-            current_active_cmd = 'S';
         }
+
+        resetSafetyWatchdog();
+        delay(100);
+
+        // Resume forward movement in the new clear direction!
+        moveForward(180);
+        current_active_cmd = 'F';
+        resetSafetyWatchdog();
 
         sendTelemetry(0, "AUTONOMOUS_DIVERTED");
     }
