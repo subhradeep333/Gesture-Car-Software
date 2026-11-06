@@ -255,3 +255,4 @@ class MappingEngine(QObject):
     def get_robot_pose(self):
         """Returns (x_cm, y_cm, heading_deg)."""
         return self.robot_x, self.robot_y, self.robot_heading
+

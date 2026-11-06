@@ -4,6 +4,7 @@ Coordinates systematic area exploration, servo scanning, obstacle avoidance,
 and dead-reckoning odometry synchronization with the 2D mapping engine.
 """
 
+import math
 import time
 from PySide6.QtCore import QObject, Signal, QTimer
 import config
@@ -27,6 +28,7 @@ class AutonomousNavigator(QObject):
     STATE_AVOIDING = "AVOIDING"
     STATE_BACKING = "BACKING"
     STATE_PAUSED = "PAUSED"
+    STATE_HOMING = "HOMING"
 
     def __init__(self, mapping_engine, websocket_manager, car_controller=None):
         super().__init__()
@@ -113,6 +115,15 @@ class AutonomousNavigator(QObject):
         self._set_state(self.STATE_IDLE)
         self._dispatch_command(config.CMD_STOP)
         self.status_message.emit("Robot stopped.")
+
+    def return_to_home(self):
+        """Initiates autonomous Return-To-Home navigation back to starting origin (0, 0)."""
+        self.set_mode(self.MODE_AUTONOMOUS)
+        self.is_active = True
+        self._set_state(self.STATE_HOMING)
+        self.action_start_time = time.time()
+        self.action_duration = 0.0
+        self.status_message.emit("Returning to starting position (0, 0)...")
 
     def reset_map(self):
         """Resets the occupancy grid map and stops robot."""
@@ -244,6 +255,46 @@ class AutonomousNavigator(QObject):
                 self.action_duration = 0.6
                 self._dispatch_command(config.CMD_STOP)
                 self.status_message.emit("Turn completed. Rescanning sector...")
+
+        # ----------------------------------------------------
+        # STATE: HOMING (Return-to-Home: driving back to origin 0, 0)
+        # ----------------------------------------------------
+        elif self.current_state == self.STATE_HOMING:
+            rx, ry, heading = self.mapping_engine.get_robot_pose()
+            dx = 0.0 - rx
+            dy = 0.0 - ry
+            dist = math.sqrt(dx * dx + dy * dy)
+
+            if dist <= 12.0:
+                # Arrived at starting position!
+                self._dispatch_command(config.CMD_STOP)
+                self._set_state(self.STATE_IDLE)
+                self.is_active = False
+                self.status_message.emit("🎉 Arrived at starting position (0, 0)! Robot parked.")
+                return
+
+            # Target angle in world coordinates:
+            target_deg = math.degrees(math.atan2(dy, dx)) % 360.0
+            ang_diff = (target_deg - heading) % 360.0
+            if ang_diff > 180.0:
+                ang_diff -= 360.0
+
+            # 1. Align heading towards start position if angle error > 25°
+            if abs(ang_diff) > 25.0:
+                turn_cmd = config.CMD_LEFT if ang_diff > 0 else config.CMD_RIGHT
+                self._dispatch_command(turn_cmd, speed=200)
+                self.status_message.emit(f"Homing: Aligning to start ({ang_diff:+.0f}°) | {dist:.0f}cm away")
+                return
+
+            # 2. Check front obstacle clearance before moving forward
+            effective_center = min(self.center_dist, self.current_dist if abs(self.current_angle - 90) <= 25 else self.center_dist)
+            if effective_center < self.critical_distance_cm:
+                self._trigger_avoidance()
+                return
+
+            # 3. Drive forward towards home
+            self._dispatch_command(config.CMD_FORWARD, speed=200)
+            self.status_message.emit(f"Homing: Driving to start ({dist:.1f} cm remaining)")
 
     def _trigger_avoidance(self):
         """Evaluates sector clearances and initiates pivot turn towards most open space."""

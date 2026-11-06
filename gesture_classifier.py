@@ -211,7 +211,13 @@ class GestureClassifier:
                 self.last_directional_command = target_cmd
                 return target_cmd
 
-        # 4. Fallback for unrecognized/ambiguous gestures (e.g. 2 fingers, loose hand)
+        # 4. TWO FINGERS UP / V-SIGN (Return to Start - ✌️ H)
+        # Index and middle extended, ring and pinky curled
+        if index_ext and middle_ext and not ring_ext and not pinky_ext and (curled_count >= 1 or ring_curled):
+            self.last_directional_command = None
+            return config.CMD_RETURN_HOME
+
+        # 5. Fallback for unrecognized/ambiguous gestures (e.g. loose hand)
         self.last_directional_command = None
         return "UNKNOWN"
 

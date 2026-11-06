@@ -283,3 +283,4 @@ class Map2DWidget(QWidget):
         painter.setPen(QColor("#CBD5E1"))
         painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
         painter.drawText(int(scale_x + scale_len_px / 2.0 - 20), int(scale_y - 6), "1.0 METER")
+

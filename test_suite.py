@@ -176,11 +176,12 @@ def run_all_tests():
     record_test("Undetected Hand Returns 'NONE'", c_none == "NONE")
     record_test("Low Confidence Hand Returns 'UNKNOWN'", c_low_conf == "UNKNOWN")
 
-    # 10. Ambiguous / Partial Gesture Rejection (Peace Sign ✌️ -> UNKNOWN)
-    peace_landmarks = list(fwd_landmarks)
-    peace_landmarks[12] = (0.5, 0.2, 0.0)  # Middle finger extended alongside index
+    # 10. Peace Sign (✌️) -> Return-To-Home (CMD_RETURN_HOME 'H')
+    peace_landmarks = list(palm_landmarks)
+    peace_landmarks[16] = (0.58, 0.48, 0.0)  # ring finger curled
+    peace_landmarks[20] = (0.66, 0.48, 0.0)  # pinky finger curled
     c_peace = classifier.classify_frame(True, peace_landmarks, 0.95)
-    record_test("Ambiguous Gesture Rejection (Peace Sign -> 'UNKNOWN')", c_peace == "UNKNOWN")
+    record_test("Two Fingers Up / Peace Sign Calls Car to Start ('H')", c_peace == config.CMD_RETURN_HOME)
 
     # 11. Directional Angular Deadband & Hysteresis Stability
     classifier.last_directional_command = config.CMD_FORWARD
@@ -367,6 +368,10 @@ def run_all_tests():
 
     nav.stop_robot()
     record_test("Stop Robot Enters IDLE State", nav.current_state == AutonomousNavigator.STATE_IDLE)
+
+    nav.return_to_home()
+    record_test("Return-To-Home Enters HOMING State", nav.current_state == AutonomousNavigator.STATE_HOMING)
+    nav.stop_robot()
 
     # 6. Map2DWidget Pan & Zoom API
     map_widget = Map2DWidget(map_eng)

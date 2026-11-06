@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
             (1, 0, config.CMD_LEFT, "👈", "LEFT", "Index finger pointing LEFT", "Skid-steer left turn", "#F39C12"),
             (1, 1, config.CMD_BACKWARD, "👇", "BACKWARD", "Index finger pointing DOWN", "Both motors reverse drive", "#3498DB"),
             (1, 2, config.CMD_RIGHT, "👉", "RIGHT", "Index finger pointing RIGHT", "Skid-steer right turn", "#9B59B6"),
+            (2, 0, config.CMD_RETURN_HOME, "✌️", "RETURN HOME", "Two fingers up (V-sign)", "Calls car back to starting position (0, 0)", "#00E5FF"),
         ]
 
         for row, col, cmd_key, icon, title, sign_desc, motor_action, hex_col in gesture_cards_data:
@@ -380,7 +381,10 @@ class MainWindow(QMainWindow):
             lbl_act.setWordWrap(True)
             i_layout.addWidget(lbl_act)
 
-            signs_grid.addWidget(item_card, row, col)
+            if cmd_key == config.CMD_RETURN_HOME:
+                signs_grid.addWidget(item_card, row, col, 1, 3)
+            else:
+                signs_grid.addWidget(item_card, row, col)
             self.gesture_guide_cards[cmd_key] = item_card
 
         guide_layout.addLayout(signs_grid)
@@ -468,6 +472,11 @@ class MainWindow(QMainWindow):
         self.btn_resume_map = QPushButton("▶ RESUME")
         self.btn_resume_map.clicked.connect(self.autonomous_navigator.resume_mapping)
         tb_layout.addWidget(self.btn_resume_map)
+
+        self.btn_home = QPushButton("🏠 RETURN HOME (✌️)")
+        self.btn_home.setStyleSheet("background-color: #0F2D38; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px;")
+        self.btn_home.clicked.connect(self.autonomous_navigator.return_to_home)
+        tb_layout.addWidget(self.btn_home)
 
         self.btn_stop_map = QPushButton("⏹ STOP ROBOT")
         self.btn_stop_map.setObjectName("btn_emergency")
@@ -651,6 +660,7 @@ class MainWindow(QMainWindow):
             AutonomousNavigator.STATE_AVOIDING: ("● OBSTACLE AVOID", "#2E1417", "#EF4444"),
             AutonomousNavigator.STATE_BACKING: ("● BACKING UP", "#2E1417", "#EF4444"),
             AutonomousNavigator.STATE_PAUSED: ("● PAUSED", "#291E14", "#F59E0B"),
+            AutonomousNavigator.STATE_HOMING: ("● RETURNING TO START (0, 0)", "#142E35", "#00E5FF"),
         }
         text, bg, col = badge_styles.get(state, ("● " + state, "#141A24", "#94A3B8"))
         self.lbl_nav_state_badge.setText(text)
@@ -1131,6 +1141,11 @@ class MainWindow(QMainWindow):
             candidate_gesture, stable_cmd, is_stable = self.gesture_classifier.process(
                 detected, landmarks_list, confidence, min_confidence=min_conf
             )
+
+            # Trigger Return-To-Home when showing ✌️ Two Fingers Up (V-Sign)
+            if candidate_gesture == config.CMD_RETURN_HOME and is_stable:
+                if self.autonomous_navigator.current_state != AutonomousNavigator.STATE_HOMING:
+                    self.autonomous_navigator.return_to_home()
 
             # 5. Evaluate Safety & Dispatch Command via WebSocket
             if self.autonomous_navigator.current_mode == AutonomousNavigator.MODE_AUTONOMOUS:

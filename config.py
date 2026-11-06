@@ -31,6 +31,7 @@ CMD_LEFT = 'L'
 CMD_RIGHT = 'R'
 CMD_STOP = 'S'
 CMD_EMERGENCY_STOP = 'E'
+CMD_RETURN_HOME = 'H'
 
 # Motor Speed Defaults (PWM Range: 100 - 255)
 DEFAULT_MOTOR_SPEED = 180
@@ -49,6 +50,7 @@ GESTURE_METADATA = {
     CMD_RIGHT: ("RIGHT", "👉", "#9b59b6"),             # Purple
     CMD_STOP: ("STOP", "✋", "#e67e22"),               # Amber
     CMD_EMERGENCY_STOP: ("EMERGENCY STOP", "✊", "#e74c3c"), # Red
+    CMD_RETURN_HOME: ("RETURN TO START", "✌️", "#00E5FF"), # Cyan
     "UNKNOWN": ("LOW CONFIDENCE", "❓", "#7f8c8d"),    # Gray
     "NONE": ("NO HAND DETECTED", "🚫", "#95a5a6")      # Muted Gray
 }

@@ -51,6 +51,7 @@ CAR (ESP32 Controller)
 | 👉 **Pointing Right** | RIGHT | `R` | Left wheels drive forward, right wheels reverse | Purple badge |
 | ✋ **Open Palm** | STOP | `S` | All motor PWM set to 0 (Smooth Stop) | Amber badge |
 | ✊ **Closed Fist** | EMERGENCY STOP | `E` | Immediate emergency brake & lock | Red badge |
+| ✌️ **Two Fingers (V-Sign)** | RETURN HOME | `H` | Autonomously navigates back to origin $(0, 0)$ | Cyan badge |
 
 ---
 
