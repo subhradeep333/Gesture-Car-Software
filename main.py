@@ -10,11 +10,13 @@ from gesture_classifier import GestureClassifier
 from safety import SafetyManager
 from websocket_manager import WebSocketManager
 from car_controller import CarController
+from mapping_engine import MappingEngine
+from autonomous_navigator import AutonomousNavigator
 from ui import MainWindow
 
 def main():
     print("==========================================================")
-    print(" ESP32 AI Hand Gesture Controlled IoT Car System (PySide6)")
+    print(" ESP32 AI Autonomous Mapping & Gesture Car System (PySide6)")
     print("==========================================================")
 
     # 1. Initialize PySide6 Application with High-DPI Scaling
@@ -29,6 +31,8 @@ def main():
     safety_manager = SafetyManager()
     websocket_manager = WebSocketManager()
     car_controller = CarController(safety_manager, websocket_manager)
+    mapping_engine = MappingEngine()
+    autonomous_navigator = AutonomousNavigator(mapping_engine, websocket_manager, car_controller)
 
     # 3. Start Background Threads
     print("[+] Initializing camera stream...")
@@ -45,7 +49,9 @@ def main():
         gesture_classifier=gesture_classifier,
         safety_manager=safety_manager,
         car_controller=car_controller,
-        websocket_manager=websocket_manager
+        websocket_manager=websocket_manager,
+        mapping_engine=mapping_engine,
+        autonomous_navigator=autonomous_navigator
     )
     window.show()
 

@@ -10,9 +10,12 @@ from PySide6.QtGui import QImage, QPixmap, QFont, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QSlider, QTextEdit,
     QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QTabWidget,
-    QProgressBar, QComboBox, QLineEdit, QCheckBox
+    QProgressBar, QComboBox, QLineEdit, QCheckBox, QSplitter
 )
 import config
+from mapping_engine import MappingEngine
+from autonomous_navigator import AutonomousNavigator
+from map_widget import Map2DWidget
 
 class RadarWidget(QWidget):
     """
@@ -139,7 +142,7 @@ class RadarWidget(QWidget):
         painter.drawEllipse(QPointF(center_x, center_y), 6, 6)
 
 class MainWindow(QMainWindow):
-    def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager, car_controller, websocket_manager):
+    def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager, car_controller, websocket_manager, mapping_engine=None, autonomous_navigator=None):
         super().__init__()
         self.camera_stream = camera_stream
         self.hand_detector = hand_detector
@@ -148,9 +151,21 @@ class MainWindow(QMainWindow):
         self.car_controller = car_controller
         self.websocket_manager = websocket_manager
 
-        self.setWindowTitle("⚡ ESP32 AI Gesture Car Controller - Command Center")
-        self.resize(1240, 820)
-        self.setMinimumSize(1024, 720)
+        # Initialize 2D Occupancy Grid Mapping & Autonomous Navigation Engine
+        self.mapping_engine = mapping_engine or MappingEngine(
+            width_m=config.MAP_WIDTH_M,
+            height_m=config.MAP_HEIGHT_M,
+            resolution_cm=config.MAP_RESOLUTION_CM
+        )
+        self.autonomous_navigator = autonomous_navigator or AutonomousNavigator(
+            self.mapping_engine,
+            self.websocket_manager,
+            self.car_controller
+        )
+
+        self.setWindowTitle("⚡ ESP32 AI Autonomous Mapping & Gesture Car Controller")
+        self.resize(1280, 840)
+        self.setMinimumSize(1080, 720)
         self.setStyleSheet(config.QSS_DARK_THEME)
 
         self.start_time = time.time()
@@ -161,6 +176,13 @@ class MainWindow(QMainWindow):
         self.websocket_manager.telemetry_received.connect(self._on_ws_telemetry)
         self.websocket_manager.radar_telemetry_received.connect(self._on_ws_radar_telemetry)
         self.websocket_manager.log_emitted.connect(self._on_ws_log)
+
+        # Wire Autonomous Navigator & Mapping Engine Signals
+        self.autonomous_navigator.mode_changed.connect(self._on_nav_mode_changed)
+        self.autonomous_navigator.state_changed.connect(self._on_nav_state_changed)
+        self.autonomous_navigator.status_message.connect(self._on_nav_status_message)
+        self.mapping_engine.pose_updated.connect(self._on_mapping_pose_updated)
+        self.mapping_engine.map_updated.connect(self._on_mapping_stats_updated)
 
         self._build_ui()
 
@@ -372,17 +394,22 @@ class MainWindow(QMainWindow):
         # ----------------------------------------------------
         self.tab_widget = QTabWidget()
 
-        # TAB 1: Real-Time Telemetry, Directional Matrix & Radar Scope
+        # TAB 1: 2D Autonomous Mapping & Exploration Dashboard
+        self.tab_mapping = QWidget()
+        self._build_tab_mapping()
+        self.tab_widget.addTab(self.tab_mapping, "🗺️ 2D Autonomous Mapping")
+
+        # TAB 2: Real-Time Telemetry, Directional Matrix & Radar Scope
         self.tab_telemetry = QWidget()
         self._build_tab_telemetry()
         self.tab_widget.addTab(self.tab_telemetry, "📊 Telemetry & Status")
 
-        # TAB 2: Calibration & Settings
+        # TAB 3: Calibration & Settings
         self.tab_settings = QWidget()
         self._build_tab_settings()
         self.tab_widget.addTab(self.tab_settings, "⚙️ Settings & Calibration")
 
-        # TAB 3: System Terminal & Logs
+        # TAB 4: System Terminal & Logs
         self.tab_logs = QWidget()
         self._build_tab_logs()
         self.tab_widget.addTab(self.tab_logs, "💻 Terminal Logs")
@@ -390,6 +417,263 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.tab_widget, stretch=5)
 
         root_layout.addLayout(content_layout, stretch=1)
+
+    def _build_tab_mapping(self):
+        layout = QVBoxLayout(self.tab_mapping)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        # ----------------------------------------------------
+        # TOP TOOLBAR: Mode Switch & Autonomous Action Buttons
+        # ----------------------------------------------------
+        toolbar_card = QFrame()
+        toolbar_card.setProperty("class", "HeaderCard")
+        tb_layout = QHBoxLayout(toolbar_card)
+        tb_layout.setContentsMargins(10, 8, 10, 8)
+        tb_layout.setSpacing(8)
+
+        # Mode Selection
+        tb_layout.addWidget(QLabel("MODE:"))
+        self.btn_mode_manual = QPushButton("🖐️ MANUAL GESTURE")
+        self.btn_mode_manual.setCheckable(True)
+        self.btn_mode_manual.setChecked(True)
+        self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
+        self.btn_mode_manual.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL))
+        tb_layout.addWidget(self.btn_mode_manual)
+
+        self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS MAPPING")
+        self.btn_mode_auto.setCheckable(True)
+        self.btn_mode_auto.setChecked(False)
+        self.btn_mode_auto.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS))
+        tb_layout.addWidget(self.btn_mode_auto)
+
+        tb_layout.addSpacing(6)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("color: #2E3B52;")
+        tb_layout.addWidget(sep)
+        tb_layout.addSpacing(6)
+
+        # Autonomous Control Actions
+        self.btn_start_map = QPushButton("▶ START MAPPING")
+        self.btn_start_map.setObjectName("btn_start")
+        self.btn_start_map.clicked.connect(self.autonomous_navigator.start_mapping)
+        tb_layout.addWidget(self.btn_start_map)
+
+        self.btn_pause_map = QPushButton("⏸ PAUSE")
+        self.btn_pause_map.setObjectName("btn_pause")
+        self.btn_pause_map.clicked.connect(self.autonomous_navigator.pause_mapping)
+        tb_layout.addWidget(self.btn_pause_map)
+
+        self.btn_resume_map = QPushButton("▶ RESUME")
+        self.btn_resume_map.clicked.connect(self.autonomous_navigator.resume_mapping)
+        tb_layout.addWidget(self.btn_resume_map)
+
+        self.btn_stop_map = QPushButton("⏹ STOP ROBOT")
+        self.btn_stop_map.setObjectName("btn_emergency")
+        self.btn_stop_map.clicked.connect(self.autonomous_navigator.stop_robot)
+        tb_layout.addWidget(self.btn_stop_map)
+
+        self.btn_reset_map = QPushButton("🔄 RESET MAP")
+        self.btn_reset_map.clicked.connect(self.autonomous_navigator.reset_map)
+        tb_layout.addWidget(self.btn_reset_map)
+
+        tb_layout.addStretch()
+
+        # Zoom & Viewport Tools
+        self.btn_zoom_in = QPushButton("🔍 +")
+        self.btn_zoom_in.setFixedWidth(34)
+        self.btn_zoom_in.clicked.connect(lambda: self.map_2d_widget.zoom_in())
+        tb_layout.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_out = QPushButton("🔍 -")
+        self.btn_zoom_out.setFixedWidth(34)
+        self.btn_zoom_out.clicked.connect(lambda: self.map_2d_widget.zoom_out())
+        tb_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_recenter = QPushButton("🎯 CENTER")
+        self.btn_recenter.clicked.connect(lambda: self.map_2d_widget.recenter_robot())
+        tb_layout.addWidget(self.btn_recenter)
+
+        layout.addWidget(toolbar_card)
+
+        # ----------------------------------------------------
+        # MAIN SPLIT AREA: Map Canvas & Telemetry Sidebar
+        # ----------------------------------------------------
+        split_layout = QHBoxLayout()
+        split_layout.setSpacing(10)
+
+        # 2D Map Widget
+        self.map_2d_widget = Map2DWidget(self.mapping_engine)
+        split_layout.addWidget(self.map_2d_widget, stretch=3)
+
+        # Mapping Telemetry Sidebar
+        map_side_layout = QVBoxLayout()
+        map_side_layout.setSpacing(8)
+
+        # 1. Navigation State Card
+        card_nav = QFrame()
+        card_nav.setProperty("class", "Card")
+        nav_box = QVBoxLayout(card_nav)
+        nav_box.setContentsMargins(10, 8, 10, 8)
+        nav_box.setSpacing(4)
+        nav_box.addWidget(self._create_metric_header("AUTONOMOUS STATE"))
+
+        self.lbl_nav_state_badge = QLabel("● IDLE / MANUAL")
+        self.lbl_nav_state_badge.setStyleSheet(
+            "background-color: #141A24; color: #94A3B8; border: 1px solid #232D3F; "
+            "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
+        )
+        nav_box.addWidget(self.lbl_nav_state_badge)
+
+        self.lbl_nav_status_msg = QLabel("Ready to start mapping session.")
+        self.lbl_nav_status_msg.setStyleSheet("font-size: 11px; color: #64748B;")
+        self.lbl_nav_status_msg.setWordWrap(True)
+        nav_box.addWidget(self.lbl_nav_status_msg)
+        map_side_layout.addWidget(card_nav)
+
+        # 2. Robot Odometry Pose Card
+        card_pose = QFrame()
+        card_pose.setProperty("class", "Card")
+        pose_box = QVBoxLayout(card_pose)
+        pose_box.setContentsMargins(10, 8, 10, 8)
+        pose_box.setSpacing(4)
+        pose_box.addWidget(self._create_metric_header("ROBOT ESTIMATED POSE"))
+
+        pose_grid = QGridLayout()
+        pose_grid.addWidget(QLabel("X Position:"), 0, 0)
+        self.lbl_pose_x = QLabel("+0.0 cm")
+        self.lbl_pose_x.setStyleSheet("font-weight: bold; color: #00E5FF;")
+        pose_grid.addWidget(self.lbl_pose_x, 0, 1)
+
+        pose_grid.addWidget(QLabel("Y Position:"), 1, 0)
+        self.lbl_pose_y = QLabel("+0.0 cm")
+        self.lbl_pose_y.setStyleSheet("font-weight: bold; color: #00E5FF;")
+        pose_grid.addWidget(self.lbl_pose_y, 1, 1)
+
+        pose_grid.addWidget(QLabel("Heading:"), 2, 0)
+        self.lbl_pose_heading = QLabel("90° (North)")
+        self.lbl_pose_heading.setStyleSheet("font-weight: bold; color: #10B981;")
+        pose_grid.addWidget(self.lbl_pose_heading, 2, 1)
+
+        pose_box.addLayout(pose_grid)
+        map_side_layout.addWidget(card_pose)
+
+        # 3. Live Ultrasonic & Servo Card
+        card_sensor = QFrame()
+        card_sensor.setProperty("class", "Card")
+        sensor_box = QVBoxLayout(card_sensor)
+        sensor_box.setContentsMargins(10, 8, 10, 8)
+        sensor_box.setSpacing(4)
+        sensor_box.addWidget(self._create_metric_header("LIVE SENSOR TELEMETRY"))
+
+        sensor_grid = QGridLayout()
+        sensor_grid.addWidget(QLabel("Distance:"), 0, 0)
+        self.lbl_map_dist = QLabel("200.0 cm")
+        self.lbl_map_dist.setStyleSheet("font-weight: bold; color: #10B981;")
+        sensor_grid.addWidget(self.lbl_map_dist, 0, 1)
+
+        sensor_grid.addWidget(QLabel("Servo Angle:"), 1, 0)
+        self.lbl_map_angle = QLabel("90°")
+        self.lbl_map_angle.setStyleSheet("font-weight: bold; color: #00E5FF;")
+        sensor_grid.addWidget(self.lbl_map_angle, 1, 1)
+
+        sensor_grid.addWidget(QLabel("Left Clear:"), 2, 0)
+        self.lbl_map_left = QLabel("200 cm")
+        sensor_grid.addWidget(self.lbl_map_left, 2, 1)
+
+        sensor_grid.addWidget(QLabel("Center Clear:"), 3, 0)
+        self.lbl_map_center = QLabel("200 cm")
+        sensor_grid.addWidget(self.lbl_map_center, 3, 1)
+
+        sensor_grid.addWidget(QLabel("Right Clear:"), 4, 0)
+        self.lbl_map_right = QLabel("200 cm")
+        sensor_grid.addWidget(self.lbl_map_right, 4, 1)
+
+        sensor_box.addLayout(sensor_grid)
+        map_side_layout.addWidget(card_sensor)
+
+        # 4. Mapping Coverage Progress Card
+        card_progress = QFrame()
+        card_progress.setProperty("class", "Card")
+        prog_box = QVBoxLayout(card_progress)
+        prog_box.setContentsMargins(10, 8, 10, 8)
+        prog_box.setSpacing(4)
+        prog_box.addWidget(self._create_metric_header("MAPPING PROGRESS"))
+
+        self.lbl_map_area = QLabel("0.00 m² Explored")
+        self.lbl_map_area.setStyleSheet("font-size: 15px; font-weight: 800; color: #00E5FF;")
+        prog_box.addWidget(self.lbl_map_area)
+
+        self.bar_map_coverage = QProgressBar()
+        self.bar_map_coverage.setRange(0, 100)
+        self.bar_map_coverage.setValue(0)
+        prog_box.addWidget(self.bar_map_coverage)
+
+        self.lbl_map_cells = QLabel("0 / 22500 grid cells surveyed")
+        self.lbl_map_cells.setStyleSheet("font-size: 10px; color: #64748B;")
+        prog_box.addWidget(self.lbl_map_cells)
+
+        map_side_layout.addWidget(card_progress)
+        map_side_layout.addStretch()
+
+        split_layout.addLayout(map_side_layout, stretch=1)
+        layout.addLayout(split_layout, stretch=1)
+
+    def _on_nav_mode_changed(self, mode):
+        if mode == AutonomousNavigator.MODE_AUTONOMOUS:
+            self.btn_mode_auto.setChecked(True)
+            self.btn_mode_manual.setChecked(False)
+            self.btn_mode_auto.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
+            self.btn_mode_manual.setStyleSheet("")
+            self.lbl_nav_state_badge.setText("● AUTONOMOUS MODE")
+            self.lbl_nav_state_badge.setStyleSheet(
+                "background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; "
+                "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
+            )
+        else:
+            self.btn_mode_manual.setChecked(True)
+            self.btn_mode_auto.setChecked(False)
+            self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
+            self.btn_mode_auto.setStyleSheet("")
+            self.lbl_nav_state_badge.setText("● MANUAL GESTURE")
+            self.lbl_nav_state_badge.setStyleSheet(
+                "background-color: #141A24; color: #94A3B8; border: 1px solid #232D3F; "
+                "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
+            )
+
+    def _on_nav_state_changed(self, state):
+        badge_styles = {
+            AutonomousNavigator.STATE_IDLE: ("● IDLE", "#141A24", "#94A3B8"),
+            AutonomousNavigator.STATE_EXPLORING: ("● EXPLORING FORWARD", "#132D21", "#10B981"),
+            AutonomousNavigator.STATE_SCANNING: ("● SCANNING SECTORS", "#231B35", "#A855F7"),
+            AutonomousNavigator.STATE_TURNING: ("● TURNING", "#291E14", "#F59E0B"),
+            AutonomousNavigator.STATE_AVOIDING: ("● OBSTACLE AVOID", "#2E1417", "#EF4444"),
+            AutonomousNavigator.STATE_BACKING: ("● BACKING UP", "#2E1417", "#EF4444"),
+            AutonomousNavigator.STATE_PAUSED: ("● PAUSED", "#291E14", "#F59E0B"),
+        }
+        text, bg, col = badge_styles.get(state, ("● " + state, "#141A24", "#94A3B8"))
+        self.lbl_nav_state_badge.setText(text)
+        self.lbl_nav_state_badge.setStyleSheet(
+            f"background-color: {bg}; color: {col}; border: 1px solid {col}; "
+            "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
+        )
+
+    def _on_nav_status_message(self, msg):
+        self.lbl_nav_status_msg.setText(msg)
+
+    def _on_mapping_pose_updated(self, x, y, heading):
+        if hasattr(self, "lbl_pose_x"):
+            self.lbl_pose_x.setText(f"{x:+.1f} cm")
+            self.lbl_pose_y.setText(f"{y:+.1f} cm")
+            self.lbl_pose_heading.setText(f"{heading:.0f}°")
+
+    def _on_mapping_stats_updated(self):
+        if hasattr(self, "lbl_map_area"):
+            explored, total, pct, area_m2 = self.mapping_engine.get_explored_stats()
+            self.lbl_map_area.setText(f"{area_m2:.2f} m² Explored")
+            self.bar_map_coverage.setValue(int(pct))
+            self.lbl_map_cells.setText(f"{explored} / {total} grid cells surveyed ({pct:.1f}%)")
 
     def _build_tab_telemetry(self):
         layout = QVBoxLayout(self.tab_telemetry)
@@ -849,9 +1133,23 @@ class MainWindow(QMainWindow):
             )
 
             # 5. Evaluate Safety & Dispatch Command via WebSocket
-            active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
-                stable_cmd, is_stable, detected, ret, confidence, min_conf
-            )
+            if self.autonomous_navigator.current_mode == AutonomousNavigator.MODE_AUTONOMOUS:
+                # Camera Hand Tracking in Autonomous Mode: Emergency Fist Gesture halts robot immediately!
+                if candidate_gesture == config.CMD_EMERGENCY_STOP:
+                    self.autonomous_navigator.stop_robot()
+                    active_car_cmd = config.CMD_EMERGENCY_STOP
+                    safety_ok = False
+                    fault_reason = "Emergency Fist Detected — Robot Halted"
+                    self.car_controller.update(config.CMD_EMERGENCY_STOP, True, True, True, 1.0, min_conf)
+                else:
+                    active_car_cmd = self.autonomous_navigator.active_command
+                    safety_ok = True
+                    fault_reason = f"Autonomous ({self.autonomous_navigator.current_state})"
+            else:
+                active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
+                    stable_cmd, is_stable, detected, ret, confidence, min_conf
+                )
+                self.mapping_engine.update_odometry(active_car_cmd)
 
             # 6. Draw HUD Overlay on Frame
             if self.chk_hud.isChecked():
@@ -935,8 +1233,22 @@ class MainWindow(QMainWindow):
         self.lbl_radar_status_badge.setText(f"{meta[1]} {meta[0]}")
         self.lbl_r_path.setText(f"RECOMMENDED: {path}")
 
+        # 2. Feed into Autonomous Navigator & 2D Mapping Engine (Tab 1)
+        self.autonomous_navigator.on_radar_telemetry(data)
+        self.map_2d_widget.set_sensor_reading(angle, dist)
+
+        # 3. Update Mapping Tab Telemetry Sidebar
+        if hasattr(self, "lbl_map_dist"):
+            self.lbl_map_dist.setText(f"{dist:.1f} cm")
+            self.lbl_map_angle.setText(f"{angle}°")
+            self.lbl_map_left.setText(f"{left:.0f} cm")
+            self.lbl_map_center.setText(f"{center:.0f} cm")
+            self.lbl_map_right.setText(f"{right:.0f} cm")
+
     def closeEvent(self, event):
         """Clean application exit handler."""
+        if hasattr(self, "autonomous_navigator"):
+            self.autonomous_navigator.stop_robot()
         if self.car_controller:
             self.car_controller.send_immediate_stop()
         if self.websocket_manager:

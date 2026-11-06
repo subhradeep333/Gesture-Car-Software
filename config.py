@@ -64,6 +64,18 @@ RADAR_STATUS_METADATA = {
     "VERY CLOSE": ("VERY CLOSE", "🚨", "#EF4444")       # Red
 }
 
+# 2D Occupancy Grid Mapping & Autonomous Navigation Settings
+MAP_WIDTH_M = 6.0              # World map width in meters
+MAP_HEIGHT_M = 6.0             # World map height in meters
+MAP_RESOLUTION_CM = 4.0        # Grid cell size in cm
+ROBOT_LINEAR_SPEED_CMS = 30.0  # Estimated forward/reverse speed in cm/s at PWM 180
+ROBOT_ANGULAR_SPEED_DEGS = 120.0 # Estimated rotational speed in deg/s at PWM 180
+
+# Autonomous Navigation Distance Thresholds (cm)
+AUTONOMOUS_SAFE_DIST_CM = 30.0      # Forward move threshold
+AUTONOMOUS_WARNING_DIST_CM = 22.0   # Turn / Avoid threshold
+AUTONOMOUS_CRITICAL_DIST_CM = 12.0  # Reverse threshold
+
 # Dark Modern PySide6 Styling Palette
 QSS_DARK_THEME = """
 QMainWindow {

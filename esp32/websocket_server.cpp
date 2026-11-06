@@ -147,6 +147,39 @@ void setupWebSocketServer() {
     Serial.printf("[+] WebSocket Server Started on port %d with active Heartbeat\n", WEBSOCKET_PORT);
 }
 
+void broadcastRadarTelemetry() {
+    static unsigned long last_broadcast = 0;
+    unsigned long now = millis();
+    if (now - last_broadcast < 60) {
+        return;  // High-rate 16 Hz telemetry stream
+    }
+    last_broadcast = now;
+
+    if (webSocket.connectedClients() == 0) {
+        return;
+    }
+
+    StaticJsonDocument<384> doc;
+    doc["status"] = "telemetry";
+    doc["command"] = String(current_active_cmd);
+    doc["battery"] = 85;
+
+    RadarData radar = getRadarData();
+    JsonObject r = doc.createNestedObject("radar");
+    r["angle"] = radar.angle;
+    r["distance"] = (int)radar.distance;
+    r["left_dist"] = (int)radar.left_dist;
+    r["center_dist"] = (int)radar.center_dist;
+    r["right_dist"] = (int)radar.right_dist;
+    r["status"] = radar.status;
+    r["best_path"] = radar.best_path;
+
+    String response;
+    serializeJson(doc, response);
+    webSocket.broadcastTXT(response);
+}
+
 void loopWebSocketServer() {
     webSocket.loop();
+    broadcastRadarTelemetry();
 }

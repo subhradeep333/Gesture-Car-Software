@@ -17,6 +17,9 @@ from gesture_classifier import GestureClassifier
 from safety import SafetyManager
 from websocket_manager import WebSocketManager
 from car_controller import CarController
+from mapping_engine import MappingEngine
+from autonomous_navigator import AutonomousNavigator
+from map_widget import Map2DWidget
 from ui import MainWindow
 import config
 
@@ -316,6 +319,68 @@ def run_all_tests():
     record_test("GUI Emergency Stop Button Toggle Active", safety.emergency_override is True)
     window._toggle_emergency_stop()
     record_test("GUI Emergency Stop Button Toggle Clear", safety.emergency_override is False)
+
+    # --------------------------------------------------------------------------
+    # SUITE 9: 2D OCCUPANCY GRID MAPPING & AUTONOMOUS NAVIGATION
+    # --------------------------------------------------------------------------
+    print("\n--- [SUITE 9] 2D Mapping Engine & Autonomous Navigation ---")
+
+    # 1. Mapping Engine Pose Initialization
+    map_eng = MappingEngine(width_m=6.0, height_m=6.0, resolution_cm=4.0)
+    rx, ry, r_head = map_eng.get_robot_pose()
+    record_test("Mapping Engine Initial Pose (0, 0, 90°)", rx == 0.0 and ry == 0.0 and r_head == 90.0)
+
+    # 2. Dead-Reckoning Odometry (Forward & Turn)
+    map_eng.update_odometry('F', dt=0.5)  # 30 cm/s * 0.5s = 15 cm forward (+Y)
+    rx_f, ry_f, _ = map_eng.get_robot_pose()
+    record_test("Odometry Forward Displacement (+Y)", ry_f > 10.0 and abs(rx_f) < 1.0)
+
+    map_eng.update_odometry('L', dt=0.5)  # 120 deg/s * 0.5s = +60 deg -> 150 deg
+    _, _, r_head_l = map_eng.get_robot_pose()
+    record_test("Odometry Turn Left Angle Rotation (+θ)", abs(r_head_l - 150.0) < 1.0)
+
+    # 3. Raycasting & Obstacle Detection
+    map_eng.add_sensor_reading(servo_angle_deg=90, distance_cm=50.0)
+    exp_cells, total_cells, pct, area_m2 = map_eng.get_explored_stats()
+    record_test("Occupancy Grid Raycasting (Explored Cells > 0)", exp_cells > 0)
+    record_test("Occupancy Grid Mapped Area Calculation (> 0 m²)", area_m2 > 0.0)
+
+    # 4. Map Reset
+    map_eng.reset_map()
+    rx_r, ry_r, r_head_r = map_eng.get_robot_pose()
+    exp_cells_r, _, _, _ = map_eng.get_explored_stats()
+    record_test("Map Reset Clears Pose & Cells", rx_r == 0.0 and ry_r == 0.0 and exp_cells_r == 0)
+
+    # 5. Autonomous Navigator State Machine
+    nav = AutonomousNavigator(map_eng, ws_mgr, car_ctrl)
+    record_test("Autonomous Navigator Initial Mode (MANUAL)", nav.current_mode == AutonomousNavigator.MODE_MANUAL)
+
+    nav.start_mapping()
+    record_test("Start Mapping Switches to AUTONOMOUS Mode", nav.current_mode == AutonomousNavigator.MODE_AUTONOMOUS)
+    record_test("Start Mapping Enters SCANNING State", nav.current_state == AutonomousNavigator.STATE_SCANNING)
+
+    nav.pause_mapping()
+    record_test("Pause Mapping Enters PAUSED State", nav.current_state == AutonomousNavigator.STATE_PAUSED)
+
+    nav.resume_mapping()
+    record_test("Resume Mapping Re-enters SCANNING State", nav.current_state == AutonomousNavigator.STATE_SCANNING)
+
+    nav.stop_robot()
+    record_test("Stop Robot Enters IDLE State", nav.current_state == AutonomousNavigator.STATE_IDLE)
+
+    # 6. Map2DWidget Pan & Zoom API
+    map_widget = Map2DWidget(map_eng)
+    initial_zoom = map_widget.zoom
+    map_widget.zoom_in()
+    record_test("Map2DWidget Zoom In Increases Scale", map_widget.zoom > initial_zoom)
+    map_widget.zoom_out()
+    map_widget.recenter_robot()
+    record_test("Map2DWidget Recenter Resets Offsets", map_widget.pan_offset_x == 0.0 and map_widget.pan_offset_y == 0.0)
+
+    # 7. GUI Mapping Tab & Telemetry Labels Verification
+    record_test("MainWindow GUI Has Mapping Tab", hasattr(window, "tab_mapping") and window.tab_mapping is not None)
+    record_test("MainWindow GUI Has Map2DWidget", hasattr(window, "map_2d_widget") and window.map_2d_widget is not None)
+    record_test("MainWindow Mapping Area Label Present", hasattr(window, "lbl_map_area"))
 
     # Clean Exit
     detector.close()

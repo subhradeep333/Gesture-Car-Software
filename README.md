@@ -54,6 +54,28 @@ CAR (ESP32 Controller)
 
 ---
 
+## 🗺️ Autonomous Car Navigation & Real-Time 2D Mapping
+
+The system includes a full-featured **Autonomous Exploration & 2D Occupancy Grid Mapping System**:
+
+* **Occupancy Grid Mapping (`mapping_engine.py`):**  
+  Uses **Bresenham's raycasting algorithm** to convert ultrasonic distances and servo angles into a probabilistic 2D spatial grid (6m x 6m @ 4cm/cell resolution). Marks free space, detected walls, and unexplored boundaries dynamically.
+* **Dead-Reckoning Kinematic Odometry:**  
+  Continuously tracks robot estimated position $(X, Y\text{ cm})$ and heading $(\theta^\circ)$ based on active movement commands and calibrated velocities.
+* **Autonomous State Machine (`autonomous_navigator.py`):**  
+  Coordinates systematic area exploration:
+  - **Scanning:** Halts wheels and sweeps the SG90 servo across $30^\circ - 150^\circ$ to gather panoramic sector clearances (Left, Center, Right).
+  - **Exploring:** Advances forward in safe pulses while monitoring ultrasonic path clearance.
+  - **Obstacle Avoidance:** Automatically halts and pivots towards the sector with maximum open clearance ($> 25\text{cm}$), or reverses if cornered.
+* **Interactive Mapping Dashboard (`map_widget.py`):**  
+  Integrated directly as the primary tab in the PySide6 Command Center:
+  - **Live 2D Map Canvas:** Displays grid lines, explored space, glowing obstacle points, robot trail history, and live sweeping sensor beam.
+  - **Interactive Viewport:** Smooth mouse drag pan and mouse wheel zoom with Recenter (🎯) button.
+  - **Controls:** Start Mapping (▶), Pause (⏸), Resume (▶), Stop (⏹), Reset Map (🔄), and Manual / Autonomous mode toggle.
+  - **Safety:** Camera hand-tracking remains active — a closed fist (✊) triggers an immediate emergency stop even during autonomous mode.
+
+---
+
 ## 🔌 ESP32 Hardware Wiring & Pin Mapping
 
 | ESP32 Pin | Component / Module Pin | Function | Notes |
