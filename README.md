@@ -66,7 +66,7 @@ CAR (ESP32 Controller)
 | **GPIO 33** | **L298N ENB** | Right Motors Speed | ESP32 LEDC PWM Channel 1 |
 | **GPIO 13** | **SG90 Servo Signal** | Radar Sweeping Motor | ESP32 LEDC PWM Channel 2 (50Hz) |
 | **GPIO 5** | **HC-SR04 TRIG** | Ultrasonic Trigger | 10µs Pulse Output |
-| **GPIO 17** | **HC-SR04 ECHO** | Ultrasonic Echo | Pulse Width Input |
+| **GPIO 19** | **HC-SR04 ECHO** | Ultrasonic Echo | Pulse Width Input |
 | **GND** | **GND** | **COMMON GROUND** | ⚠️ Connect to Battery GND & ESP32 GND |
 | **VIN / 5V** | **5V Out / VCC** | Power Input | Servo & Sensor 5V VCC |
 | — | **12V In** | Battery Pack + | Connect to +7.4V to +12V battery pack |

@@ -57,9 +57,9 @@
 #define RAMP_INTERVAL_MS 5      // Smooth 5ms ramp interval (~90ms 0->180 accel)
 
 // SG90 Servo & HC-SR04 Ultrasonic Radar Hardware Pinout
-#define SERVO_PIN 13       // SG90 Servo Signal Pin
-#define TRIG_PIN 5         // HC-SR04 Ultrasonic Trigger Pin
-#define ECHO_PIN 17        // HC-SR04 Ultrasonic Echo Pin (GPIO 17)
+#define SERVO_PIN 13       // SG90 Servo Signal Pin (D13)
+#define TRIG_PIN 5         // HC-SR04 Ultrasonic Trigger Pin (D5)
+#define ECHO_PIN 19        // HC-SR04 Ultrasonic Echo Pin (D19)
 #define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
 
 // Radar & Obstacle Avoidance Configuration Parameters
