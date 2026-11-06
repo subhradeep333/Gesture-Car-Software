@@ -133,10 +133,14 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
     }
 }
 
+static unsigned long last_stationary_scan_time = 0;
+
 void checkAutonomousObstacleAvoidance() {
-    // If car is currently driving FORWARD ('F') and an obstacle appears in front
+    unsigned long now = millis();
+
+    // CASE 1: Driving FORWARD ('F') and an obstacle appears in front
     if (current_active_cmd == 'F' && isFrontBlocked()) {
-        Serial.println("[AUTO-AVOID] Obstacle ahead! Stopping car to divert direction...");
+        Serial.println("\n[AUTO-AVOID] 🚨 Moving Forward and Obstacle Ahead! Stopping to divert...");
         stopMotors();
         resetSafetyWatchdog();
 
@@ -145,25 +149,29 @@ void checkAutonomousObstacleAvoidance() {
         performScanLookAround(d_left, d_center, d_right, best_path);
         resetSafetyWatchdog();
 
-        Serial.printf("[AUTO-AVOID] Look-around scan results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best: %s\n",
+        Serial.printf("[AUTO-AVOID] Look-around results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best: %s\n",
                       d_left, d_center, d_right, best_path);
 
         // Turn towards the open space with full skid-steer torque (215 PWM, 600ms)
         if (strcmp(best_path, "LEFT") == 0) {
             Serial.println("[AUTO-AVOID] Diverting direction to LEFT...");
             turnLeft(215);
+            resetSafetyWatchdog();
             delay(600);
             stopMotors();
         } else if (strcmp(best_path, "RIGHT") == 0) {
             Serial.println("[AUTO-AVOID] Diverting direction to RIGHT...");
             turnRight(215);
+            resetSafetyWatchdog();
             delay(600);
             stopMotors();
         } else {
             Serial.println("[AUTO-AVOID] Both sides blocked! Reversing and turning...");
             moveBackward(215);
+            resetSafetyWatchdog();
             delay(500);
             turnLeft(215);
+            resetSafetyWatchdog();
             delay(600);
             stopMotors();
         }
@@ -177,6 +185,23 @@ void checkAutonomousObstacleAvoidance() {
         resetSafetyWatchdog();
 
         sendTelemetry(0, "AUTONOMOUS_DIVERTED");
+        return;
+    }
+
+    // CASE 2: Stationary / Bench-Testing ('S') and an obstacle is placed in front (<= 28cm)
+    // Allows user to test obstacle detection & servo look-around sweep on their desk!
+    if (current_active_cmd == 'S' && isFrontBlocked() && (now - last_stationary_scan_time > 4000)) {
+        last_stationary_scan_time = now;
+        Serial.println("\n[BENCH-TEST] 🔍 Obstacle detected in front of sensor! Performing Look-Around Scan demonstration...");
+
+        float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
+        char best_path[16] = "CENTER";
+        performScanLookAround(d_left, d_center, d_right, best_path);
+
+        Serial.printf("[BENCH-TEST] Look-around results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best Open Path: %s\n",
+                      d_left, d_center, d_right, best_path);
+
+        sendTelemetry(0, "BENCH_SCAN_COMPLETE");
     }
 }
 
