@@ -63,13 +63,13 @@
 #define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
 
 // Radar & Obstacle Avoidance Configuration Parameters
-#define SERVO_MIN_ANGLE 30         // Leftmost scan angle (degrees)
-#define SERVO_MAX_ANGLE 150        // Rightmost scan angle (degrees)
-#define SERVO_SWEEP_STEP_DEG 2     // Angle increment per sweep step
-#define SERVO_STEP_INTERVAL_MS 20  // Non-blocking servo update tick (ms)
+#define SERVO_MIN_ANGLE 40         // Rightmost scan angle (degrees)
+#define SERVO_MAX_ANGLE 140        // Leftmost scan angle (degrees)
+#define SERVO_SWEEP_STEP_DEG 5     // Angle increment per sweep step (smooth fluid sweep)
+#define SERVO_STEP_INTERVAL_MS 25  // Non-blocking servo update tick (ms: 25ms * 20 steps = 500ms half-sweep)
 
 #define ULTRASONIC_MAX_RANGE_CM 200.0f  // Maximum valid sensing range (cm)
-#define OBSTACLE_VERY_CLOSE_CM 10.0f    // Emergency stop / collision threshold (10cm)
-#define OBSTACLE_WARNING_CM 25.0f       // Caution threshold (25cm)
+#define OBSTACLE_VERY_CLOSE_CM 12.0f    // Emergency stop / collision threshold (12cm)
+#define OBSTACLE_WARNING_CM 28.0f       // Obstacle scan & divert trigger threshold (28cm)
 
 #endif // CONFIG_H

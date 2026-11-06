@@ -366,6 +366,10 @@ def run_all_tests():
     record_test("Return-To-Home Enters HOMING State", nav.current_state == AutonomousNavigator.STATE_HOMING)
     nav.stop_robot()
 
+    nav._trigger_avoidance()
+    record_test("Trigger Avoidance Enters AVOIDING State (Look-Around Scan)", nav.current_state == AutonomousNavigator.STATE_AVOIDING)
+    nav.stop_robot()
+
     # 6. Map2DWidget Pan & Zoom API
     map_widget = Map2DWidget(map_eng)
     initial_zoom = map_widget.zoom

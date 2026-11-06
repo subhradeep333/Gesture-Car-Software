@@ -67,17 +67,31 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
             switch (cmd) {
                 case 'F':
                     if (isFrontBlocked()) {
-                        RadarData radar = getRadarData();
-                        if (strcmp(radar.best_path, "LEFT") == 0) {
+                        Serial.println("[WS] Forward path blocked! Halting to scan for open space...");
+                        stopMotors();
+                        current_active_cmd = 'S';
+
+                        float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
+                        char best_path[16] = "CENTER";
+                        performScanLookAround(d_left, d_center, d_right, best_path);
+
+                        Serial.printf("[WS] Look-around scan results: L=%.1f, C=%.1f, R=%.1f -> Best: %s\n",
+                                      d_left, d_center, d_right, best_path);
+
+                        if (strcmp(best_path, "LEFT") == 0) {
                             turnLeft(speed);
-                            current_active_cmd = 'L';
-                        } else if (strcmp(radar.best_path, "RIGHT") == 0) {
+                            delay(450);
+                            stopMotors();
+                        } else if (strcmp(best_path, "RIGHT") == 0) {
                             turnRight(speed);
-                            current_active_cmd = 'R';
+                            delay(450);
+                            stopMotors();
                         } else {
                             moveBackward(speed);
-                            current_active_cmd = 'B';
+                            delay(500);
+                            stopMotors();
                         }
+
                         sendTelemetry(num, "OBSTACLE_DIVERTED");
                         return;
                     } else {
@@ -115,25 +129,40 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 }
 
 void checkAutonomousObstacleAvoidance() {
-    // If car is currently driving FORWARD ('F') and an obstacle suddenly appears in front (< 20cm)
+    // If car is currently driving FORWARD ('F') and an obstacle appears in front
     if (current_active_cmd == 'F' && isFrontBlocked()) {
-        RadarData radar = getRadarData();
+        Serial.println("[AUTO-AVOID] Obstacle ahead! Halting car to scan surroundings...");
+        stopMotors();
+        current_active_cmd = 'S';
 
-        if (strcmp(radar.best_path, "LEFT") == 0) {
-            turnLeft(180);
-            current_active_cmd = 'L';
-            Serial.println("[AUTO-AVOID] Obstacle detected! Diverting route to LEFT");
-        } else if (strcmp(radar.best_path, "RIGHT") == 0) {
-            turnRight(180);
-            current_active_cmd = 'R';
-            Serial.println("[AUTO-AVOID] Obstacle detected! Diverting route to RIGHT");
+        float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
+        char best_path[16] = "CENTER";
+        performScanLookAround(d_left, d_center, d_right, best_path);
+
+        Serial.printf("[AUTO-AVOID] Look-around scan results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best: %s\n",
+                      d_left, d_center, d_right, best_path);
+
+        if (strcmp(best_path, "LEFT") == 0) {
+            Serial.println("[AUTO-AVOID] Diverting route to LEFT empty space...");
+            turnLeft(200);
+            delay(450);
+            stopMotors();
+            current_active_cmd = 'S';
+        } else if (strcmp(best_path, "RIGHT") == 0) {
+            Serial.println("[AUTO-AVOID] Diverting route to RIGHT empty space...");
+            turnRight(200);
+            delay(450);
+            stopMotors();
+            current_active_cmd = 'S';
         } else {
-            moveBackward(180);
-            current_active_cmd = 'B';
-            Serial.println("[AUTO-AVOID] Obstacle detected! Reversing to clear space");
+            Serial.println("[AUTO-AVOID] Both sides blocked! Reversing for clearance...");
+            moveBackward(200);
+            delay(500);
+            stopMotors();
+            current_active_cmd = 'S';
         }
 
-        sendTelemetry(0, "AUTONOMOUS_ROUTE_DIVERT");
+        sendTelemetry(0, "AUTONOMOUS_DIVERTED");
     }
 }
 

@@ -65,36 +65,42 @@ float readDistance() {
     // Measure echo pulse width (timeout 25ms ~ 400cm max)
     unsigned long duration = pulseIn(ECHO_PIN, HIGH, 25000);
     if (duration == 0) {
-        filtered_dist = (0.7f * ULTRASONIC_MAX_RANGE_CM) + (0.3f * filtered_dist);
         return ULTRASONIC_MAX_RANGE_CM;  // No reflection -> Clear range
     }
 
     float raw_cm = (float)duration * 0.0343f / 2.0f;
     if (raw_cm < 2.0f || raw_cm > ULTRASONIC_MAX_RANGE_CM) {
-        raw_cm = ULTRASONIC_MAX_RANGE_CM;
+        return ULTRASONIC_MAX_RANGE_CM;
     }
 
-    // Exponential moving average filter for noise rejection
-    filtered_dist = (0.7f * raw_cm) + (0.3f * filtered_dist);
-    return filtered_dist;
+    return raw_cm;
 }
 
 void detectObstacle() {
-    if (center_dist < OBSTACLE_VERY_CLOSE_CM || current_dist < OBSTACLE_VERY_CLOSE_CM) {
+    bool is_critical = (center_dist < OBSTACLE_VERY_CLOSE_CM) ||
+                       (abs(current_angle - 90) <= 20 && current_dist < OBSTACLE_VERY_CLOSE_CM);
+    bool is_warning = (center_dist < OBSTACLE_WARNING_CM) ||
+                      (abs(current_angle - 90) <= 25 && current_dist < OBSTACLE_WARNING_CM);
+
+    if (is_critical) {
         strncpy(current_radar_data.status, "VERY CLOSE", sizeof(current_radar_data.status));
-    } else if (center_dist < OBSTACLE_WARNING_CM || current_dist < OBSTACLE_WARNING_CM) {
+    } else if (is_warning) {
         strncpy(current_radar_data.status, "OBSTACLE DETECTED", sizeof(current_radar_data.status));
     } else {
         strncpy(current_radar_data.status, "CLEAR", sizeof(current_radar_data.status));
     }
 
-    // Determine direction with more clear space
-    if (left_dist > right_dist + 10.0f) {
+    // Determine direction with more clear open space
+    if (left_dist > right_dist + 6.0f && left_dist > OBSTACLE_WARNING_CM) {
         strncpy(current_radar_data.best_path, "LEFT", sizeof(current_radar_data.best_path));
-    } else if (right_dist > left_dist + 10.0f) {
+    } else if (right_dist > left_dist + 6.0f && right_dist > OBSTACLE_WARNING_CM) {
+        strncpy(current_radar_data.best_path, "RIGHT", sizeof(current_radar_data.best_path));
+    } else if (left_dist >= right_dist && left_dist > OBSTACLE_VERY_CLOSE_CM) {
+        strncpy(current_radar_data.best_path, "LEFT", sizeof(current_radar_data.best_path));
+    } else if (right_dist > left_dist && right_dist > OBSTACLE_VERY_CLOSE_CM) {
         strncpy(current_radar_data.best_path, "RIGHT", sizeof(current_radar_data.best_path));
     } else {
-        strncpy(current_radar_data.best_path, "CENTER", sizeof(current_radar_data.best_path));
+        strncpy(current_radar_data.best_path, "BACKWARD", sizeof(current_radar_data.best_path));
     }
 
     current_radar_data.angle = current_angle;
@@ -111,49 +117,83 @@ void scanEnvironment() {
     }
     last_servo_update = now;
 
+    // Continuous smooth radar sweeping across front hemisphere (40° -> 140° -> 40°)
+    current_angle += (sweep_direction * SERVO_SWEEP_STEP_DEG);
+    if (current_angle >= SERVO_MAX_ANGLE) {
+        current_angle = SERVO_MAX_ANGLE;
+        sweep_direction = -1;
+    } else if (current_angle <= SERVO_MIN_ANGLE) {
+        current_angle = SERVO_MIN_ANGLE;
+        sweep_direction = 1;
+    }
+    updateServo(current_angle);
+
     // Read distance at current angle
     current_dist = readDistance();
 
-    // Determine if front path is clear vs obstructed (< 50cm)
-    bool obstacle_sensed = (center_dist < OBSTACLE_WARNING_CM || current_dist < OBSTACLE_WARNING_CM);
+    // Map measurements into respective sector memories
+    if (current_angle >= 115) {
+        left_dist = (0.7f * current_dist) + (0.3f * left_dist);
+    } else if (current_angle <= 65) {
+        right_dist = (0.7f * current_dist) + (0.3f * right_dist);
+    } else if (current_angle >= 80 && current_angle <= 100) {
+        center_dist = (0.7f * current_dist) + (0.3f * center_dist);
+    }
 
-    if (!obstacle_sensed) {
-        // Path is CLEAR: Servo stays parked facing straight ahead (90 deg)
-        if (current_angle != 90) {
-            if (current_angle < 90) current_angle = min(90, current_angle + SERVO_SWEEP_STEP_DEG);
-            else if (current_angle > 90) current_angle = max(90, current_angle - SERVO_SWEEP_STEP_DEG);
-            updateServo(current_angle);
-        }
-        center_dist = current_dist;
-        left_dist = ULTRASONIC_MAX_RANGE_CM;
-        right_dist = ULTRASONIC_MAX_RANGE_CM;
+    detectObstacle();
+}
+
+void performScanLookAround(float &out_left, float &out_center, float &out_right, char* out_best_path) {
+    // 1. Move servo to RIGHT (40°) & sample clear space
+    updateServo(40);
+    delay(240);
+    out_right = readDistance();
+    delay(20);
+    float r2 = readDistance();
+    out_right = min(out_right, r2);
+
+    // 2. Move servo to LEFT (140°) & sample clear space
+    updateServo(140);
+    delay(280);
+    out_left = readDistance();
+    delay(20);
+    float l2 = readDistance();
+    out_left = min(out_left, l2);
+
+    // 3. Return servo to CENTER (90°) & sample front clearance
+    updateServo(90);
+    delay(240);
+    out_center = readDistance();
+    delay(20);
+    float c2 = readDistance();
+    out_center = min(out_center, c2);
+
+    // Update memory registers
+    left_dist = out_left;
+    right_dist = out_right;
+    center_dist = out_center;
+    current_dist = out_center;
+    current_angle = 90;
+
+    // Compare clearances: select direction with most open space
+    if (out_left > out_right + 6.0f && out_left > OBSTACLE_WARNING_CM) {
+        strncpy(out_best_path, "LEFT", 16);
+    } else if (out_right > out_left + 6.0f && out_right > OBSTACLE_WARNING_CM) {
+        strncpy(out_best_path, "RIGHT", 16);
+    } else if (out_left >= out_right && out_left > OBSTACLE_VERY_CLOSE_CM) {
+        strncpy(out_best_path, "LEFT", 16);
+    } else if (out_right > out_left && out_right > OBSTACLE_VERY_CLOSE_CM) {
+        strncpy(out_best_path, "RIGHT", 16);
     } else {
-        // OBSTACLE SENSED (< 50cm): Automatically activate Servo Radar Sweep (30° -> 150° -> 30°)
-        current_angle += (sweep_direction * SERVO_SWEEP_STEP_DEG);
-        if (current_angle >= SERVO_MAX_ANGLE) {
-            current_angle = SERVO_MAX_ANGLE;
-            sweep_direction = -1;
-        } else if (current_angle <= SERVO_MIN_ANGLE) {
-            current_angle = SERVO_MIN_ANGLE;
-            sweep_direction = 1;
-        }
-        updateServo(current_angle);
-
-        // Store sector distance memory
-        if (current_angle >= 110) {
-            left_dist = (0.6f * current_dist) + (0.4f * left_dist);
-        } else if (current_angle <= 70) {
-            right_dist = (0.6f * current_dist) + (0.4f * right_dist);
-        } else {
-            center_dist = (0.6f * current_dist) + (0.4f * center_dist);
-        }
+        strncpy(out_best_path, "BACKWARD", 16);
     }
 
     detectObstacle();
 }
 
 bool isFrontBlocked() {
-    return (center_dist < OBSTACLE_VERY_CLOSE_CM);
+    return (center_dist < OBSTACLE_WARNING_CM) ||
+           (abs(current_angle - 90) <= 20 && current_dist < OBSTACLE_WARNING_CM);
 }
 
 RadarData getRadarData() {

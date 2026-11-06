@@ -20,5 +20,6 @@ void updateServo(int angle);
 void detectObstacle();
 bool isFrontBlocked();
 RadarData getRadarData();
+void performScanLookAround(float &out_left, float &out_center, float &out_right, char* out_best_path);
 
 #endif // RADAR_CONTROLLER_H

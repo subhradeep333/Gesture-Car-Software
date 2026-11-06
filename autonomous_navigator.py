@@ -41,8 +41,8 @@ class AutonomousNavigator(QObject):
         self.is_active = False
 
         # Navigation decision parameters (cm)
-        self.safe_distance_cm = 30.0        # Min clearance to move forward
-        self.warning_distance_cm = 22.0     # Obstacle caution threshold
+        self.safe_distance_cm = 32.0        # Min clearance to move forward
+        self.warning_distance_cm = 28.0     # Obstacle caution threshold (triggers scan & divert)
         self.critical_distance_cm = 12.0    # Emergency stop & reverse threshold
 
         # Latest radar telemetry cache from ESP32
@@ -237,11 +237,53 @@ class AutonomousNavigator(QObject):
                 self._dispatch_command(config.CMD_STOP)
 
         # ----------------------------------------------------
+        # STATE: AVOIDING (Car halted, servo & ultrasonic scanning surroundings for empty space)
+        # ----------------------------------------------------
+        elif self.current_state == self.STATE_AVOIDING:
+            if self.active_command != config.CMD_STOP:
+                self._dispatch_command(config.CMD_STOP)
+
+            # Wait for servo look-around sweep to refresh left and right clearances
+            if elapsed >= self.action_duration:
+                # Compare clearances: Left sector vs Right sector
+                if self.left_dist > self.right_dist + 5.0 and self.left_dist > self.warning_distance_cm:
+                    self.turn_direction = config.CMD_LEFT
+                    turn_name = "LEFT"
+                    open_space = self.left_dist
+                elif self.right_dist > self.left_dist + 5.0 and self.right_dist > self.warning_distance_cm:
+                    self.turn_direction = config.CMD_RIGHT
+                    turn_name = "RIGHT"
+                    open_space = self.right_dist
+                elif self.left_dist >= self.right_dist and self.left_dist > self.critical_distance_cm:
+                    self.turn_direction = config.CMD_LEFT
+                    turn_name = "LEFT"
+                    open_space = self.left_dist
+                elif self.right_dist > self.critical_distance_cm:
+                    self.turn_direction = config.CMD_RIGHT
+                    turn_name = "RIGHT"
+                    open_space = self.right_dist
+                else:
+                    # Both sides blocked: Reverse to create room, then re-scan
+                    self._set_state(self.STATE_BACKING)
+                    self.action_start_time = now
+                    self.action_duration = 0.6
+                    self._dispatch_command(config.CMD_BACKWARD, speed=210)
+                    self.status_message.emit("Both sides blocked! Reversing to create clearance...")
+                    return
+
+                # Divert towards the open space!
+                self._set_state(self.STATE_TURNING)
+                self.action_start_time = now
+                self.action_duration = 0.55  # ~75° pivot turn
+                self._dispatch_command(self.turn_direction, speed=210)
+                self.status_message.emit(f"Open space found on {turn_name} ({open_space:.0f}cm). Diverting route...")
+
+        # ----------------------------------------------------
         # STATE: BACKING (Reversing slightly to disengage from obstacle)
         # ----------------------------------------------------
         elif self.current_state == self.STATE_BACKING:
             if elapsed >= self.action_duration:
-                # After backing up, halt and survey again
+                # After backing up, halt and scan surroundings for open space
                 self._trigger_avoidance()
 
         # ----------------------------------------------------
@@ -289,6 +331,14 @@ class AutonomousNavigator(QObject):
             # 2. Check front obstacle clearance before moving forward
             effective_center = min(self.center_dist, self.current_dist if abs(self.current_angle - 90) <= 25 else self.center_dist)
             if effective_center < self.critical_distance_cm:
+                self._set_state(self.STATE_BACKING)
+                self.action_start_time = now
+                self.action_duration = 0.5
+                self._dispatch_command(config.CMD_BACKWARD, speed=210)
+                self.status_message.emit("Homing path blocked! Reversing...")
+                return
+
+            if effective_center < self.warning_distance_cm:
                 self._trigger_avoidance()
                 return
 
@@ -297,27 +347,10 @@ class AutonomousNavigator(QObject):
             self.status_message.emit(f"Homing: Driving to start ({dist:.1f} cm remaining)")
 
     def _trigger_avoidance(self):
-        """Evaluates sector clearances and initiates pivot turn towards most open space."""
+        """Halts the robot and activates look-around scanning to find open space to divert."""
         self._dispatch_command(config.CMD_STOP)
-
-        # Compare clearance: Left sector vs Right sector
-        if self.left_dist > self.right_dist + 5.0 and self.left_dist > 25.0:
-            self.turn_direction = config.CMD_LEFT
-            turn_name = "LEFT"
-        elif self.right_dist > self.left_dist + 5.0 and self.right_dist > 25.0:
-            self.turn_direction = config.CMD_RIGHT
-            turn_name = "RIGHT"
-        elif self.left_dist >= self.right_dist:
-            self.turn_direction = config.CMD_LEFT
-            turn_name = "LEFT"
-        else:
-            self.turn_direction = config.CMD_RIGHT
-            turn_name = "RIGHT"
-
-        self._set_state(self.STATE_TURNING)
+        self._set_state(self.STATE_AVOIDING)
         self.action_start_time = time.time()
-        # Rotate for ~550ms (~65° - 80° pivot)
-        self.action_duration = 0.55
-        self._dispatch_command(self.turn_direction, speed=210)
-        self.status_message.emit(f"Obstacle ahead. Turning {turn_name} toward open space...")
+        self.action_duration = 1.0  # Allow 1.0s for the servo to sweep across left & right
+        self.status_message.emit("Obstacle detected! Scanning left & right for open space...")
 
