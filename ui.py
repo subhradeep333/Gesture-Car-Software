@@ -1,26 +1,35 @@
 """
 Modern PySide6 (Qt6) Desktop Command Dashboard for ESP32 AI Hand Gesture Controlled IoT Car.
+Features:
+- Responsive Live Vision Viewport with HUD overlay & ✌️ Return-To-Home detector.
+- 2D Occupancy Grid SLAM Mapping with Pan, Zoom & Odometry Trajectory Tracking.
+- Interactive Directional Matrix & Keyboard (WASD / Arrows) Manual Teleoperation.
+- Real-Time Ultrasonic Polar Radar Scope & Autonomous Obstacle Avoidance.
+- Monospace Terminal Log Console with Tag Filtering & Search.
 """
 
 import math
 import time
 import cv2
+import numpy as np
 from PySide6.QtCore import Qt, QTimer, Slot, QPointF, QRectF
 from PySide6.QtGui import QImage, QPixmap, QFont, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QSlider, QTextEdit,
     QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QTabWidget,
-    QProgressBar, QComboBox, QLineEdit, QCheckBox, QSplitter
+    QProgressBar, QComboBox, QLineEdit, QCheckBox, QSizePolicy
 )
 import config
 from mapping_engine import MappingEngine
 from autonomous_navigator import AutonomousNavigator
 from map_widget import Map2DWidget
 
+
 class RadarWidget(QWidget):
     """
-    Custom 60 FPS Sci-Fi Polar Radar Scope (30° to 150°) for SG90 Servo & HC-SR04 Scanner.
-    Draws distance rings, sweep ray, and color-coded obstacle points.
+    Custom 60 FPS Polar Radar Scope (30° to 150°) for SG90 Servo & HC-SR04 Ultrasonic Scanner.
+    Renders distance range rings, sweep angle rays, detected obstacle points with distance tags,
+    and a real-time radial sweep beam.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,7 +44,7 @@ class RadarWidget(QWidget):
         self.current_distance = distance
         now = time.time()
         self.obstacle_points.append((angle, distance, now))
-        # Keep recent points (fade after 4 seconds)
+        # Keep recent points (fade after 4.0 seconds)
         self.obstacle_points = [p for p in self.obstacle_points if (now - p[2]) < 4.0]
         self.update()
 
@@ -48,18 +57,18 @@ class RadarWidget(QWidget):
         center_y = h - 25.0
         radius = min(w / 2.2, h - 45.0)
 
-        # Background Fill
-        painter.fillRect(self.rect(), QColor("#080B10"))
+        # Deep slate background
+        painter.fillRect(self.rect(), QColor("#080C14"))
 
         # Concentric distance rings: 50cm, 100cm, 150cm, 200cm
-        pen_grid = QPen(QColor("#1E2736"), 1, Qt.DashLine)
+        pen_grid = QPen(QColor("#1E293B"), 1, Qt.DashLine)
         painter.setPen(pen_grid)
 
         for r_ratio in [0.25, 0.5, 0.75, 1.0]:
             r_curr = radius * r_ratio
             rect = QRectF(center_x - r_curr, center_y - r_curr, r_curr * 2, r_curr * 2)
             painter.drawArc(rect, 30 * 16, 120 * 16)
-            
+
             # Distance text labels
             dist_val = int(r_ratio * self.max_range)
             painter.setPen(QColor("#64748B"))
@@ -84,7 +93,7 @@ class RadarWidget(QWidget):
             painter.drawText(int(x_lbl), int(y_lbl), f"{a}°")
             painter.setPen(pen_line)
 
-        # Draw historical obstacle detection points with distance tags
+        # Draw historical obstacle detection points
         now = time.time()
         for a, d, t in self.obstacle_points:
             if d >= self.max_range:
@@ -97,29 +106,28 @@ class RadarWidget(QWidget):
             pt_x = center_x + r_pt * math.cos(rad)
             pt_y = center_y - r_pt * math.sin(rad)
 
-            # Color coding based on obstacle distance Proximity (10cm = Very Close Stop)
+            # Color coding: Red (<= 10cm Critical), Amber (<= 25cm Warning), Green (> 25cm Clear)
             if d <= 10.0:
-                col = QColor(239, 68, 68, int(255 * alpha))   # Red (Critical <= 10cm)
+                col = QColor(239, 68, 68, int(255 * alpha))
             elif d <= 25.0:
-                col = QColor(245, 158, 11, int(255 * alpha))  # Amber (Warning <= 25cm)
+                col = QColor(245, 158, 11, int(255 * alpha))
             else:
-                col = QColor(16, 185, 129, int(255 * alpha))  # Green (Clear > 25cm)
+                col = QColor(16, 185, 129, int(255 * alpha))
 
             painter.setBrush(QBrush(col))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QPointF(pt_x, pt_y), 6, 6)
 
-            # Draw explicit distance text label right next to the obstacle point if <= 50cm
             if d <= 50.0 and age < 2.0:
                 painter.setPen(col)
                 painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
                 painter.drawText(int(pt_x + 8), int(pt_y - 2), f"{d:.0f}cm")
 
-        # Top Overlay Readout Banner for Detected Object Distance
+        # Top Overlay Readout Banner
         painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
         if self.current_distance <= 10.0:
             painter.setPen(QColor("#EF4444"))
-            readout = f"🚨 OBJECT VERY CLOSE (10cm STOP): {self.current_distance:.1f} cm (@ {self.current_angle}°)"
+            readout = f"🚨 CRITICAL OBSTACLE (10cm STOP): {self.current_distance:.1f} cm (@ {self.current_angle}°)"
         elif self.current_distance <= 25.0:
             painter.setPen(QColor("#F59E0B"))
             readout = f"⚠️ OBSTACLE SENSED: {self.current_distance:.1f} cm (@ {self.current_angle}°)"
@@ -137,12 +145,14 @@ class RadarWidget(QWidget):
         painter.setPen(pen_beam)
         painter.drawLine(QPointF(center_x, center_y), QPointF(beam_x, beam_y))
 
-        # Center Origin Hub Dot
+        # Center Hub Dot
         painter.setBrush(QBrush(QColor("#00E5FF")))
         painter.drawEllipse(QPointF(center_x, center_y), 6, 6)
 
+
 class MainWindow(QMainWindow):
-    def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager, car_controller, websocket_manager, mapping_engine=None, autonomous_navigator=None):
+    def __init__(self, camera_stream, hand_detector, gesture_classifier, safety_manager,
+                 car_controller, websocket_manager, mapping_engine=None, autonomous_navigator=None):
         super().__init__()
         self.camera_stream = camera_stream
         self.hand_detector = hand_detector
@@ -164,12 +174,13 @@ class MainWindow(QMainWindow):
         )
 
         self.setWindowTitle("⚡ ESP32 AI Autonomous Mapping & Gesture Car Controller")
-        self.resize(1280, 840)
-        self.setMinimumSize(1080, 720)
+        self.resize(1360, 860)
+        self.setMinimumSize(1100, 720)
+        self.setFocusPolicy(Qt.StrongFocus)  # Enable instant keyboard driving
         self.setStyleSheet(config.QSS_DARK_THEME)
 
         self.start_time = time.time()
-        self.log_history = []  # Store raw tuples (timestamp, tag, message)
+        self.log_history = []  # List of tuples: (timestamp, tag, message)
 
         # Wire PySide6 Signals from WebSocket Manager
         self.websocket_manager.connection_status_changed.connect(self._on_ws_status_changed)
@@ -195,22 +206,21 @@ class MainWindow(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         root_layout = QVBoxLayout(main_widget)
-        root_layout.setContentsMargins(14, 14, 14, 14)
-        root_layout.setSpacing(12)
+        root_layout.setContentsMargins(14, 12, 14, 12)
+        root_layout.setSpacing(10)
 
         # ====================================================
-        # TOP HEADER BAR: App Title & Live Telemetry Pills
+        # TOP HEADER BAR: App Branding & Status Badges
         # ====================================================
         header_card = QFrame()
         header_card.setProperty("class", "HeaderCard")
         header_layout = QHBoxLayout(header_card)
         header_layout.setContentsMargins(16, 10, 16, 10)
 
-        # App Brand Title
         title_box = QVBoxLayout()
-        title_lbl = QLabel("Software Control Gesture Car")
+        title_lbl = QLabel("⚡ ESP32 AUTONOMOUS ROBOTIC CAR")
         title_lbl.setProperty("class", "AppTitle")
-        sub_lbl = QLabel("REAL-TIME VISION TELEMETRY & ROBOTICS COMMAND DASHBOARD")
+        sub_lbl = QLabel("SLAM 2D OCCUPANCY MAPPING • HC-SR04 RADAR • RETURN-TO-HOME GESTURE")
         sub_lbl.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748B; letter-spacing: 0.5px;")
         title_box.addWidget(title_lbl)
         title_box.addWidget(sub_lbl)
@@ -218,7 +228,7 @@ class MainWindow(QMainWindow):
 
         header_layout.addStretch()
 
-        # Live Status Badges (Pills)
+        # Status Pills
         self.lbl_system_badge = QLabel("● SYSTEM INACTIVE")
         self.lbl_system_badge.setStyleSheet(
             "background-color: #261F18; color: #F59E0B; border: 1px solid #D97706; "
@@ -235,7 +245,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_uptime = QLabel("⏱ 00:00:00")
         self.lbl_uptime.setStyleSheet(
-            "background-color: #141A24; color: #00E5FF; border: 1px solid #232D3F; "
+            "background-color: #111827; color: #00E5FF; border: 1px solid #1E293B; "
             "border-radius: 14px; padding: 5px 14px; font-size: 12px; font-weight: 700;"
         )
         header_layout.addWidget(self.lbl_uptime)
@@ -246,58 +256,58 @@ class MainWindow(QMainWindow):
         # MAIN CONTENT AREA: Split Columns
         # ====================================================
         content_layout = QHBoxLayout()
-        content_layout.setSpacing(14)
+        content_layout.setSpacing(12)
 
         # ----------------------------------------------------
-        # LEFT COLUMN: Camera Stream Viewport & Primary Actions
+        # LEFT COLUMN: Responsive Camera Stream & Gesture Control
         # ----------------------------------------------------
         left_layout = QVBoxLayout()
-        left_layout.setSpacing(12)
+        left_layout.setSpacing(10)
 
-        # Video Frame Container Card
+        # Video Frame Card
         video_card = QFrame()
         video_card.setProperty("class", "Card")
         video_card_layout = QVBoxLayout(video_card)
-        video_card_layout.setContentsMargins(12, 12, 12, 12)
+        video_card_layout.setContentsMargins(10, 10, 10, 10)
         video_card_layout.setSpacing(8)
 
-        # Viewport Header
         vp_header = QHBoxLayout()
         vp_title = QLabel("📹 LIVE CAMERA STREAM")
         vp_title.setProperty("class", "SectionHeader")
         vp_header.addWidget(vp_title)
-        
+
         self.lbl_res_badge = QLabel(f"{config.FRAME_WIDTH}x{config.FRAME_HEIGHT} • 30 FPS")
         self.lbl_res_badge.setStyleSheet("font-size: 11px; font-weight: bold; color: #64748B;")
         vp_header.addWidget(self.lbl_res_badge, alignment=Qt.AlignRight)
         video_card_layout.addLayout(vp_header)
 
-        # Video Canvas Label
+        # Responsive Video Canvas Label
         self.video_label = QLabel()
-        self.video_label.setFixedSize(config.FRAME_WIDTH, config.FRAME_HEIGHT)
-        self.video_label.setStyleSheet("background-color: #05070A; border: 1px solid #1E2736; border-radius: 8px;")
+        self.video_label.setMinimumSize(400, 300)
+        self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.video_label.setStyleSheet("background-color: #06090F; border: 1px solid #1E293B; border-radius: 8px;")
         self.video_label.setAlignment(Qt.AlignCenter)
-        video_card_layout.addWidget(self.video_label, alignment=Qt.AlignCenter)
+        video_card_layout.addWidget(self.video_label, stretch=1)
 
-        # Viewport Options (HUD Overlay & Flip Toggles)
+        # Viewport Options
         vp_options = QHBoxLayout()
         self.chk_hud = QCheckBox("Tactical HUD Overlay")
         self.chk_hud.setChecked(True)
         vp_options.addWidget(self.chk_hud)
 
-        self.chk_flip = QCheckBox("Flip Video Horizontal")
+        self.chk_flip = QCheckBox("Flip Horizontal")
         self.chk_flip.setChecked(False)
         vp_options.addWidget(self.chk_flip)
         video_card_layout.addLayout(vp_options)
 
-        left_layout.addWidget(video_card)
+        left_layout.addWidget(video_card, stretch=6)
 
         # Primary Action Control Box
         actions_card = QFrame()
         actions_card.setProperty("class", "Card")
         actions_layout = QHBoxLayout(actions_card)
-        actions_layout.setContentsMargins(12, 12, 12, 12)
-        actions_layout.setSpacing(12)
+        actions_layout.setContentsMargins(10, 10, 10, 10)
+        actions_layout.setSpacing(10)
 
         self.btn_start = QPushButton("▶ START SYSTEM")
         self.btn_start.setObjectName("btn_start")
@@ -317,74 +327,80 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(actions_card)
 
-        # ----------------------------------------------------
-        # GESTURE SIGNS & ACTION GUIDE CARD
-        # ----------------------------------------------------
+        # Active Gesture Guide Card (✌️ Return To Start)
         guide_card = QFrame()
         guide_card.setProperty("class", "Card")
         guide_layout = QVBoxLayout(guide_card)
         guide_layout.setContentsMargins(12, 10, 12, 10)
-        guide_layout.setSpacing(8)
+        guide_layout.setSpacing(6)
 
-        # Header with title & helpful tip
         g_hdr = QHBoxLayout()
-        g_title = QLabel("✌️ ACTIVE GESTURE CONTROL")
+        g_title = QLabel("✌️ ACTIVE GESTURE RECOGNITION")
         g_title.setProperty("class", "SectionHeader")
         g_hdr.addWidget(g_title)
 
         g_tip = QLabel("Return-To-Home")
-        g_tip.setStyleSheet("font-size: 11px; font-weight: 600; color: #00E5FF;")
+        g_tip.setStyleSheet("font-size: 11px; font-weight: 700; color: #00E5FF;")
         g_hdr.addWidget(g_tip, alignment=Qt.AlignRight)
         guide_layout.addLayout(g_hdr)
 
         self.gesture_guide_cards = {}
 
-        # Dedicated Active Gesture Card: ✌️ Return To Start
         item_card = QFrame()
         item_card.setProperty("accent_color", "#00E5FF")
         item_card.setStyleSheet(
-            "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 10px 12px;"
+            "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
         )
         i_layout = QVBoxLayout(item_card)
-        i_layout.setContentsMargins(8, 8, 8, 8)
+        i_layout.setContentsMargins(8, 6, 8, 6)
         i_layout.setSpacing(4)
 
-        top_row = QHBoxLayout()
         lbl_title = QLabel("✌️ <span style='color: #00E5FF; font-weight: 800; font-size: 13px;'>RETURN TO START (HOMING)</span> <span style='color: #64748B; font-size: 11px;'>[H]</span>")
         lbl_title.setTextFormat(Qt.RichText)
-        top_row.addWidget(lbl_title)
-        i_layout.addLayout(top_row)
+        i_layout.addWidget(lbl_title)
 
-        lbl_sign = QLabel("Two fingers held up (V-Sign / Peace Sign)")
+        lbl_sign = QLabel("Hold up two fingers (V-Sign / Peace Sign)")
         lbl_sign.setStyleSheet("font-size: 12px; font-weight: 600; color: #F8FAFC;")
-        lbl_sign.setWordWrap(True)
         i_layout.addWidget(lbl_sign)
 
-        lbl_act = QLabel("⚡ Autonomous closed-loop homing: calls robotic car back to start coordinate (0, 0)")
+        lbl_act = QLabel("⚡ Autonomous closed-loop homing: calls robotic car back to start (0, 0)")
         lbl_act.setStyleSheet("font-size: 11px; font-weight: 500; color: #38BDF8;")
         lbl_act.setWordWrap(True)
         i_layout.addWidget(lbl_act)
 
+        # Live gesture status banner & confidence progress bar
+        status_row = QHBoxLayout()
+        self.lbl_gesture_detect_state = QLabel("👀 Awaiting ✌️ gesture in camera view...")
+        self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
+        status_row.addWidget(self.lbl_gesture_detect_state)
+
+        self.bar_gesture_live_conf = QProgressBar()
+        self.bar_gesture_live_conf.setRange(0, 100)
+        self.bar_gesture_live_conf.setValue(0)
+        self.bar_gesture_live_conf.setFixedHeight(10)
+        self.bar_gesture_live_conf.setFixedWidth(100)
+        status_row.addWidget(self.bar_gesture_live_conf, alignment=Qt.AlignRight)
+        i_layout.addLayout(status_row)
+
         self.gesture_guide_cards[config.CMD_RETURN_HOME] = item_card
         guide_layout.addWidget(item_card)
 
-        # Informational Note: Manual directional gestures disabled
+        # Notice Card
         note_card = QFrame()
-        note_card.setStyleSheet("background-color: #0F172A; border: 1px dashed #334155; border-radius: 8px; padding: 8px 10px;")
+        note_card.setStyleSheet("background-color: #0F172A; border: 1px dashed #334155; border-radius: 6px; padding: 6px 8px;")
         n_layout = QVBoxLayout(note_card)
-        n_layout.setContentsMargins(6, 6, 6, 6)
+        n_layout.setContentsMargins(4, 4, 4, 4)
         n_layout.setSpacing(2)
         n_title = QLabel("🤖 Autonomous Navigation Mode")
         n_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #94A3B8;")
-        n_desc = QLabel("All directional hand gestures (pointing, fist, palm) have been cleared. Autonomous mapping guides the vehicle, and ✌️ returns the car home.")
+        n_desc = QLabel("Directional gestures are cleared. Autonomous mapping guides the vehicle, and ✌️ triggers Return-To-Home.")
         n_desc.setStyleSheet("font-size: 10px; color: #64748B;")
         n_desc.setWordWrap(True)
         n_layout.addWidget(n_title)
         n_layout.addWidget(n_desc)
         guide_layout.addWidget(note_card)
 
-        left_layout.addWidget(guide_card)
-        left_layout.addStretch()
+        left_layout.addWidget(guide_card, stretch=2)
 
         content_layout.addLayout(left_layout, stretch=4)
 
@@ -414,7 +430,6 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.tab_logs, "💻 Terminal Logs")
 
         content_layout.addWidget(self.tab_widget, stretch=5)
-
         root_layout.addLayout(content_layout, stretch=1)
 
     def _build_tab_mapping(self):
@@ -423,82 +438,91 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         # ----------------------------------------------------
-        # TOP TOOLBAR: Mode Switch & Autonomous Action Buttons
+        # GROUPED TOP TOOLBAR: Clean 2-Row Design
         # ----------------------------------------------------
         toolbar_card = QFrame()
         toolbar_card.setProperty("class", "HeaderCard")
-        tb_layout = QHBoxLayout(toolbar_card)
+        tb_layout = QVBoxLayout(toolbar_card)
         tb_layout.setContentsMargins(10, 8, 10, 8)
         tb_layout.setSpacing(8)
 
-        # Mode Selection
-        tb_layout.addWidget(QLabel("MODE:"))
-        self.btn_mode_manual = QPushButton("🖐️ MANUAL GESTURE")
-        self.btn_mode_manual.setCheckable(True)
-        self.btn_mode_manual.setChecked(True)
-        self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
-        self.btn_mode_manual.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL))
-        tb_layout.addWidget(self.btn_mode_manual)
+        # Row 1: Mode Switch & Viewport Navigation
+        r1_layout = QHBoxLayout()
+        r1_layout.setSpacing(8)
+
+        lbl_mode = QLabel("MODE:")
+        lbl_mode.setStyleSheet("font-size: 11px; font-weight: 800; color: #94A3B8; letter-spacing: 0.5px;")
+        r1_layout.addWidget(lbl_mode)
 
         self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS MAPPING")
         self.btn_mode_auto.setCheckable(True)
         self.btn_mode_auto.setChecked(False)
         self.btn_mode_auto.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS))
-        tb_layout.addWidget(self.btn_mode_auto)
+        r1_layout.addWidget(self.btn_mode_auto)
 
-        tb_layout.addSpacing(6)
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("color: #2E3B52;")
-        tb_layout.addWidget(sep)
-        tb_layout.addSpacing(6)
+        self.btn_mode_manual = QPushButton("🖐️ MANUAL GESTURE")
+        self.btn_mode_manual.setCheckable(True)
+        self.btn_mode_manual.setChecked(True)
+        self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
+        self.btn_mode_manual.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL))
+        r1_layout.addWidget(self.btn_mode_manual)
 
-        # Autonomous Control Actions
-        self.btn_start_map = QPushButton("▶ START MAPPING")
-        self.btn_start_map.setObjectName("btn_start")
-        self.btn_start_map.clicked.connect(self.autonomous_navigator.start_mapping)
-        tb_layout.addWidget(self.btn_start_map)
+        r1_layout.addStretch()
 
-        self.btn_pause_map = QPushButton("⏸ PAUSE")
-        self.btn_pause_map.setObjectName("btn_pause")
-        self.btn_pause_map.clicked.connect(self.autonomous_navigator.pause_mapping)
-        tb_layout.addWidget(self.btn_pause_map)
+        # Viewport zoom/recenter controls
+        lbl_view = QLabel("VIEW:")
+        lbl_view.setStyleSheet("font-size: 11px; font-weight: 800; color: #94A3B8; letter-spacing: 0.5px;")
+        r1_layout.addWidget(lbl_view)
 
-        self.btn_resume_map = QPushButton("▶ RESUME")
-        self.btn_resume_map.clicked.connect(self.autonomous_navigator.resume_mapping)
-        tb_layout.addWidget(self.btn_resume_map)
-
-        self.btn_home = QPushButton("🏠 RETURN HOME (✌️)")
-        self.btn_home.setStyleSheet("background-color: #0F2D38; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px;")
-        self.btn_home.clicked.connect(self.autonomous_navigator.return_to_home)
-        tb_layout.addWidget(self.btn_home)
-
-        self.btn_stop_map = QPushButton("⏹ STOP ROBOT")
-        self.btn_stop_map.setObjectName("btn_emergency")
-        self.btn_stop_map.clicked.connect(self.autonomous_navigator.stop_robot)
-        tb_layout.addWidget(self.btn_stop_map)
-
-        self.btn_reset_map = QPushButton("🔄 RESET MAP")
-        self.btn_reset_map.clicked.connect(self.autonomous_navigator.reset_map)
-        tb_layout.addWidget(self.btn_reset_map)
-
-        tb_layout.addStretch()
-
-        # Zoom & Viewport Tools
         self.btn_zoom_in = QPushButton("🔍 +")
-        self.btn_zoom_in.setFixedWidth(34)
+        self.btn_zoom_in.setFixedWidth(38)
         self.btn_zoom_in.clicked.connect(lambda: self.map_2d_widget.zoom_in())
-        tb_layout.addWidget(self.btn_zoom_in)
+        r1_layout.addWidget(self.btn_zoom_in)
 
         self.btn_zoom_out = QPushButton("🔍 -")
-        self.btn_zoom_out.setFixedWidth(34)
+        self.btn_zoom_out.setFixedWidth(38)
         self.btn_zoom_out.clicked.connect(lambda: self.map_2d_widget.zoom_out())
-        tb_layout.addWidget(self.btn_zoom_out)
+        r1_layout.addWidget(self.btn_zoom_out)
 
-        self.btn_recenter = QPushButton("🎯 CENTER")
+        self.btn_recenter = QPushButton("🎯 Recenter")
         self.btn_recenter.clicked.connect(lambda: self.map_2d_widget.recenter_robot())
-        tb_layout.addWidget(self.btn_recenter)
+        r1_layout.addWidget(self.btn_recenter)
 
+        tb_layout.addLayout(r1_layout)
+
+        # Row 2: Exploration Lifecycle Actions & Homing
+        r2_layout = QHBoxLayout()
+        r2_layout.setSpacing(8)
+
+        self.btn_start_map = QPushButton("▶ Start Mapping")
+        self.btn_start_map.setObjectName("btn_start")
+        self.btn_start_map.clicked.connect(self.autonomous_navigator.start_mapping)
+        r2_layout.addWidget(self.btn_start_map)
+
+        self.btn_pause_map = QPushButton("⏸ Pause")
+        self.btn_pause_map.setObjectName("btn_pause")
+        self.btn_pause_map.clicked.connect(self.autonomous_navigator.pause_mapping)
+        r2_layout.addWidget(self.btn_pause_map)
+
+        self.btn_resume_map = QPushButton("▶ Resume")
+        self.btn_resume_map.clicked.connect(self.autonomous_navigator.resume_mapping)
+        r2_layout.addWidget(self.btn_resume_map)
+
+        self.btn_home = QPushButton("🏠 Return Home (✌️)")
+        self.btn_home.setStyleSheet("background-color: #0F2D38; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px;")
+        self.btn_home.clicked.connect(self.autonomous_navigator.return_to_home)
+        r2_layout.addWidget(self.btn_home)
+
+        self.btn_stop_map = QPushButton("⏹ Stop Robot")
+        self.btn_stop_map.setObjectName("btn_emergency")
+        self.btn_stop_map.clicked.connect(self.autonomous_navigator.stop_robot)
+        r2_layout.addWidget(self.btn_stop_map)
+
+        self.btn_reset_map = QPushButton("🔄 Reset Map")
+        self.btn_reset_map.clicked.connect(self.autonomous_navigator.reset_map)
+        r2_layout.addWidget(self.btn_reset_map)
+
+        tb_layout.addLayout(r2_layout)
         layout.addWidget(toolbar_card)
 
         # ----------------------------------------------------
@@ -515,7 +539,7 @@ class MainWindow(QMainWindow):
         map_side_layout = QVBoxLayout()
         map_side_layout.setSpacing(8)
 
-        # 1. Navigation State Card
+        # Card 1: Autonomous State
         card_nav = QFrame()
         card_nav.setProperty("class", "Card")
         nav_box = QVBoxLayout(card_nav)
@@ -536,7 +560,7 @@ class MainWindow(QMainWindow):
         nav_box.addWidget(self.lbl_nav_status_msg)
         map_side_layout.addWidget(card_nav)
 
-        # 2. Robot Odometry Pose Card
+        # Card 2: Robot Estimated Pose
         card_pose = QFrame()
         card_pose.setProperty("class", "Card")
         pose_box = QVBoxLayout(card_pose)
@@ -563,7 +587,7 @@ class MainWindow(QMainWindow):
         pose_box.addLayout(pose_grid)
         map_side_layout.addWidget(card_pose)
 
-        # 3. Live Ultrasonic & Servo Card
+        # Card 3: Live Ultrasonic & Servo Telemetry
         card_sensor = QFrame()
         card_sensor.setProperty("class", "Card")
         sensor_box = QVBoxLayout(card_sensor)
@@ -597,7 +621,7 @@ class MainWindow(QMainWindow):
         sensor_box.addLayout(sensor_grid)
         map_side_layout.addWidget(card_sensor)
 
-        # 4. Mapping Coverage Progress Card
+        # Card 4: Mapping Coverage Progress
         card_progress = QFrame()
         card_progress.setProperty("class", "Card")
         prog_box = QVBoxLayout(card_progress)
@@ -693,13 +717,13 @@ class MainWindow(QMainWindow):
         card_gesture = QFrame()
         card_gesture.setProperty("class", "MetricCard")
         g_box = QVBoxLayout(card_gesture)
-        g_box.setContentsMargins(6, 6, 6, 6)
+        g_box.setContentsMargins(8, 8, 8, 8)
         g_box.addWidget(self._create_metric_header("DETECTED GESTURE"))
         self.lbl_gesture_val = QLabel("🚫 NONE")
         self.lbl_gesture_val.setProperty("class", "MetricValue")
         self.lbl_gesture_val.setStyleSheet("color: #94A3B8;")
         g_box.addWidget(self.lbl_gesture_val)
-        
+
         self.bar_conf = QProgressBar()
         self.bar_conf.setRange(0, 100)
         self.bar_conf.setValue(0)
@@ -710,7 +734,7 @@ class MainWindow(QMainWindow):
         card_command = QFrame()
         card_command.setProperty("class", "MetricCard")
         c_box = QVBoxLayout(card_command)
-        c_box.setContentsMargins(6, 6, 6, 6)
+        c_box.setContentsMargins(8, 8, 8, 8)
         c_box.addWidget(self._create_metric_header("CAR COMMAND"))
         self.lbl_command_val = QLabel("✋ STOP [S]")
         self.lbl_command_val.setProperty("class", "MetricValue")
@@ -726,7 +750,7 @@ class MainWindow(QMainWindow):
         card_perf = QFrame()
         card_perf.setProperty("class", "MetricCard")
         p_box = QVBoxLayout(card_perf)
-        p_box.setContentsMargins(6, 6, 6, 6)
+        p_box.setContentsMargins(8, 8, 8, 8)
         p_box.addWidget(self._create_metric_header("CAMERA PERFORMANCE"))
         self.lbl_fps_val = QLabel("0.0 FPS")
         self.lbl_fps_val.setProperty("class", "MetricValue")
@@ -743,7 +767,7 @@ class MainWindow(QMainWindow):
         card_link = QFrame()
         card_link.setProperty("class", "MetricCard")
         l_box = QVBoxLayout(card_link)
-        l_box.setContentsMargins(6, 6, 6, 6)
+        l_box.setContentsMargins(8, 8, 8, 8)
         l_box.addWidget(self._create_metric_header("ESP32 BATTERY & LINK"))
         self.lbl_battery_val = QLabel("100% 🔋")
         self.lbl_battery_val.setProperty("class", "MetricValue")
@@ -759,12 +783,12 @@ class MainWindow(QMainWindow):
         layout.addLayout(grid)
 
         # ====================================================
-        # EMBEDDED ULTRASONIC RADAR SCOPE CARD (SINGLE WINDOW)
+        # EMBEDDED ULTRASONIC RADAR SCOPE CARD
         # ====================================================
         card_radar = QFrame()
         card_radar.setProperty("class", "Card")
         r_box = QVBoxLayout(card_radar)
-        r_box.setContentsMargins(8, 8, 8, 8)
+        r_box.setContentsMargins(10, 8, 10, 8)
         r_box.setSpacing(4)
 
         r_hdr = QHBoxLayout()
@@ -820,21 +844,30 @@ class MainWindow(QMainWindow):
         r_box.addLayout(rm_grid)
         layout.addWidget(card_radar)
 
-        # Directional Visual Indicator Grid Matrix (Tactical Compass)
+        # ====================================================
+        # DIRECTIONAL CONTROL MATRIX (INTERACTIVE MANUAL DRIVE)
+        # ====================================================
         dir_card = QFrame()
         dir_card.setProperty("class", "Card")
         dir_layout = QVBoxLayout(dir_card)
-        dir_layout.setContentsMargins(8, 8, 8, 8)
-        dir_layout.addWidget(self._create_metric_header("DIRECTIONAL CONTROL MATRIX"))
+        dir_layout.setContentsMargins(10, 8, 10, 8)
+        dir_layout.setSpacing(6)
+
+        d_hdr = QHBoxLayout()
+        d_hdr.addWidget(self._create_metric_header("DIRECTIONAL CONTROL MATRIX (INTERACTIVE MANUAL DRIVE)"))
+        lbl_hint = QLabel("⌨️ Shortcuts: [W/A/S/D] or [Arrows] drive • [Space] stop • [H] home")
+        lbl_hint.setStyleSheet("font-size: 11px; color: #64748B;")
+        d_hdr.addWidget(lbl_hint, alignment=Qt.AlignRight)
+        dir_layout.addLayout(d_hdr)
 
         matrix_grid = QGridLayout()
         matrix_grid.setSpacing(6)
 
-        self.btn_dir_fwd = QPushButton("▲ FORWARD")
-        self.btn_dir_left = QPushButton("◄ LEFT")
-        self.btn_dir_stop = QPushButton("● STOP")
-        self.btn_dir_right = QPushButton("RIGHT ►")
-        self.btn_dir_back = QPushButton("▼ BACKWARD")
+        self.btn_dir_fwd = QPushButton("▲ FORWARD [W / ↑]")
+        self.btn_dir_left = QPushButton("◄ LEFT [A / ←]")
+        self.btn_dir_stop = QPushButton("● STOP [Space]")
+        self.btn_dir_right = QPushButton("RIGHT ► [D / →]")
+        self.btn_dir_back = QPushButton("▼ BACKWARD [S / ↓]")
 
         self.dir_buttons = {
             config.CMD_FORWARD: self.btn_dir_fwd,
@@ -844,9 +877,17 @@ class MainWindow(QMainWindow):
             config.CMD_BACKWARD: self.btn_dir_back
         }
 
+        # Wire click handlers for interactive bench testing & manual teleoperation
+        self.btn_dir_fwd.clicked.connect(lambda: self._send_manual_cmd(config.CMD_FORWARD))
+        self.btn_dir_left.clicked.connect(lambda: self._send_manual_cmd(config.CMD_LEFT))
+        self.btn_dir_stop.clicked.connect(lambda: self._send_manual_cmd(config.CMD_STOP))
+        self.btn_dir_right.clicked.connect(lambda: self._send_manual_cmd(config.CMD_RIGHT))
+        self.btn_dir_back.clicked.connect(lambda: self._send_manual_cmd(config.CMD_BACKWARD))
+
         for b in self.dir_buttons.values():
-            b.setEnabled(False)
-            b.setStyleSheet("background-color: #18202D; color: #475569; border: 1px solid #232D3F;")
+            b.setProperty("class", "DirButton")
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFocusPolicy(Qt.NoFocus)
 
         matrix_grid.addWidget(self.btn_dir_fwd, 0, 1)
         matrix_grid.addWidget(self.btn_dir_left, 1, 0)
@@ -856,6 +897,77 @@ class MainWindow(QMainWindow):
 
         dir_layout.addLayout(matrix_grid)
         layout.addWidget(dir_card)
+
+    def _send_manual_cmd(self, cmd):
+        """Dispatches a manual directional command from GUI buttons or keyboard driving."""
+        if self.safety_manager.emergency_override:
+            self._on_ws_log("SAFETY", "Manual drive blocked: Emergency Stop is active")
+            return
+        if not self.safety_manager.system_active:
+            self._on_ws_log("SAFETY", "Manual drive blocked: System paused. Click START SYSTEM first.")
+            return
+
+        speed = self.slider_speed.value() if hasattr(self, "slider_speed") else config.DEFAULT_MOTOR_SPEED
+        self.car_controller.send_command(cmd, speed=speed)
+        self.mapping_engine.update_odometry(cmd)
+
+        c_meta = config.GESTURE_METADATA.get(cmd, config.GESTURE_METADATA[config.CMD_STOP])
+        self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{cmd}]")
+        self.lbl_command_val.setStyleSheet(f"color: {c_meta[2]};")
+        self.lbl_safety_status.setText("Manual Keyboard/GUI Control")
+        self.lbl_safety_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #10B981;")
+
+        # Highlight active direction button
+        for cmd_key, btn in self.dir_buttons.items():
+            if cmd_key == cmd:
+                meta = config.GESTURE_METADATA.get(cmd_key, ("STOP", "●", "#00E5FF"))
+                btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none; border-radius: 6px;")
+            else:
+                btn.setStyleSheet("")
+
+    def keyPressEvent(self, event):
+        """Keyboard steering handler for bench testing and driving."""
+        focus_w = self.focusWidget()
+        if isinstance(focus_w, (QLineEdit, QTextEdit)):
+            super().keyPressEvent(event)
+            return
+
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key in (Qt.Key_Up, Qt.Key_W):
+            self._send_manual_cmd(config.CMD_FORWARD)
+        elif key in (Qt.Key_Down, Qt.Key_S):
+            self._send_manual_cmd(config.CMD_BACKWARD)
+        elif key in (Qt.Key_Left, Qt.Key_A):
+            self._send_manual_cmd(config.CMD_LEFT)
+        elif key in (Qt.Key_Right, Qt.Key_D):
+            self._send_manual_cmd(config.CMD_RIGHT)
+        elif key == Qt.Key_Space:
+            self._send_manual_cmd(config.CMD_STOP)
+        elif key == Qt.Key_H:
+            self.autonomous_navigator.return_to_home()
+        elif key == Qt.Key_Escape:
+            self._toggle_emergency_stop()
+        else:
+            super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        """Auto-stops vehicle when steering key is released."""
+        focus_w = self.focusWidget()
+        if isinstance(focus_w, (QLineEdit, QTextEdit)):
+            super().keyReleaseEvent(event)
+            return
+
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key in (Qt.Key_Up, Qt.Key_W, Qt.Key_Down, Qt.Key_S, Qt.Key_Left, Qt.Key_A, Qt.Key_Right, Qt.Key_D):
+            self._send_manual_cmd(config.CMD_STOP)
+        else:
+            super().keyReleaseEvent(event)
 
     def _build_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
@@ -919,7 +1031,47 @@ class MainWindow(QMainWindow):
         c_layout.addWidget(self.slider_conf)
         layout.addWidget(card_conf)
 
+        # Hardware & Connection Diagnostic Card
+        card_conn = QFrame()
+        card_conn.setProperty("class", "Card")
+        conn_layout = QVBoxLayout(card_conn)
+        conn_layout.setContentsMargins(12, 10, 12, 10)
+        conn_layout.setSpacing(6)
+
+        conn_layout.addWidget(self._create_metric_header("ESP32 HARDWARE & WEBSOCKET CONNECTION"))
+
+        conn_grid = QGridLayout()
+        conn_grid.addWidget(QLabel("Target IP:"), 0, 0)
+        lbl_ip = QLabel(config.ESP32_IP)
+        lbl_ip.setStyleSheet("font-family: monospace; color: #00E5FF;")
+        conn_grid.addWidget(lbl_ip, 0, 1)
+
+        conn_grid.addWidget(QLabel("Port:"), 1, 0)
+        lbl_port = QLabel(str(config.WS_PORT))
+        lbl_port.setStyleSheet("font-family: monospace; color: #00E5FF;")
+        conn_grid.addWidget(lbl_port, 1, 1)
+
+        conn_grid.addWidget(QLabel("WebSocket URL:"), 2, 0)
+        lbl_url = QLabel(config.WS_URL)
+        lbl_url.setStyleSheet("font-family: monospace; color: #10B981;")
+        conn_grid.addWidget(lbl_url, 2, 1)
+
+        conn_layout.addLayout(conn_grid)
+
+        btn_reconnect = QPushButton("🔄 Reconnect WebSocket")
+        btn_reconnect.clicked.connect(self._reconnect_websocket)
+        conn_layout.addWidget(btn_reconnect)
+
+        layout.addWidget(card_conn)
         layout.addStretch()
+
+    def _reconnect_websocket(self):
+        """Forces a clean restart of the WebSocket client thread."""
+        self._on_ws_log("WS", f"Reconnecting to {config.WS_URL}...")
+        if self.websocket_manager:
+            self.websocket_manager.stop()
+            time.sleep(0.1)
+            self.websocket_manager.start()
 
     def _build_tab_logs(self):
         layout = QVBoxLayout(self.tab_logs)
@@ -928,7 +1080,6 @@ class MainWindow(QMainWindow):
 
         # Filter & Action Toolbar
         toolbar = QHBoxLayout()
-        
         toolbar.addWidget(QLabel("Filter:"))
         self.cmb_filter = QComboBox()
         self.cmb_filter.addItems(["ALL LOGS", "WS", "TX", "RX", "SAFETY", "SYSTEM", "ERROR"])
@@ -980,7 +1131,7 @@ class MainWindow(QMainWindow):
             self.car_controller.send_immediate_stop()
             self.btn_start.setText("▶ START SYSTEM")
             self.btn_start.setObjectName("btn_start")
-            self.btn_start.setStyleSheet("")  # Apply QSS rule
+            self.btn_start.setStyleSheet("")
             self.lbl_system_badge.setText("● SYSTEM PAUSED")
             self.lbl_system_badge.setStyleSheet(
                 "background-color: #261F18; color: #F59E0B; border: 1px solid #D97706; "
@@ -991,7 +1142,7 @@ class MainWindow(QMainWindow):
             self.safety_manager.set_system_active(True)
             self.btn_start.setText("⏸ PAUSE SYSTEM")
             self.btn_start.setObjectName("btn_pause")
-            self.btn_start.setStyleSheet("")  # Apply QSS rule
+            self.btn_start.setStyleSheet("")
             self.btn_emergency.setText("🚨 EMERGENCY STOP 🚨")
             self.lbl_system_badge.setText("● SYSTEM ACTIVE")
             self.lbl_system_badge.setStyleSheet(
@@ -1059,7 +1210,6 @@ class MainWindow(QMainWindow):
         self._append_log_entry(timestamp, tag, message)
 
     def _append_log_entry(self, timestamp, tag, message):
-        # Apply filters
         selected_filter = self.cmb_filter.currentText()
         if selected_filter != "ALL LOGS" and tag != selected_filter:
             if selected_filter == "ERROR" and "ERROR" not in tag:
@@ -1071,7 +1221,6 @@ class MainWindow(QMainWindow):
         if search_txt and search_txt not in message.lower() and search_txt not in tag.lower():
             return
 
-        # Color palette for HTML tags
         tag_colors = {
             "WS": "#00E5FF",
             "TX": "#10B981",
@@ -1114,7 +1263,7 @@ class MainWindow(QMainWindow):
         mins, secs = divmod(rem, 60)
         self.lbl_uptime.setText(f"⏱ {hrs:02d}:{mins:02d}:{secs:02d}")
 
-        # 2. Grab camera frame
+        # 2. Grab Camera Frame
         ret, frame, fps = self.camera_stream.read()
 
         candidate_gesture = "NONE"
@@ -1144,7 +1293,6 @@ class MainWindow(QMainWindow):
 
             # 5. Evaluate Safety & Dispatch Command via WebSocket
             if self.autonomous_navigator.current_mode == AutonomousNavigator.MODE_AUTONOMOUS:
-                # Camera Hand Tracking in Autonomous Mode: Emergency Fist Gesture halts robot immediately!
                 if candidate_gesture == config.CMD_EMERGENCY_STOP:
                     self.autonomous_navigator.stop_robot()
                     active_car_cmd = config.CMD_EMERGENCY_STOP
@@ -1168,13 +1316,19 @@ class MainWindow(QMainWindow):
                 bgr_col = tuple(int(hex_col[i:i+2], 16) for i in (4, 2, 0))
                 frame = self.hand_detector.draw_landmarks(frame, pixel_landmarks, g_meta[0], bgr_col, confidence)
 
-            # 7. Render Frame to QLabel via QImage
+            # 7. Render Frame to QLabel via QImage (Responsive Smooth Scaling)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_frame.shape
             bytes_per_line = ch * w
             q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(q_img)
-            self.video_label.setPixmap(pixmap)
+
+            target_w = max(380, self.video_label.width())
+            target_h = max(285, self.video_label.height())
+            scaled_pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.video_label.setPixmap(scaled_pixmap)
+
+            self.lbl_res_badge.setText(f"{w}x{h} • {fps:.1f} FPS")
         else:
             active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
                 config.CMD_STOP, True, False, False, 0.0, min_conf
@@ -1187,6 +1341,16 @@ class MainWindow(QMainWindow):
 
         conf_pct = int(confidence * 100.0) if detected else 0
         self.bar_conf.setValue(conf_pct)
+
+        # Update dedicated ✌️ gesture live detection status
+        if candidate_gesture == config.CMD_RETURN_HOME and detected:
+            self.bar_gesture_live_conf.setValue(conf_pct)
+            self.lbl_gesture_detect_state.setText("✌️ V-SIGN DETECTED (Calling Home)")
+            self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 800; color: #00E5FF;")
+        else:
+            self.bar_gesture_live_conf.setValue(0)
+            self.lbl_gesture_detect_state.setText("👀 Awaiting ✌️ gesture in camera view...")
+            self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
 
         c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
         self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
@@ -1205,11 +1369,11 @@ class MainWindow(QMainWindow):
         for cmd_key, btn in self.dir_buttons.items():
             if cmd_key == active_car_cmd:
                 meta = config.GESTURE_METADATA.get(cmd_key, ("STOP", "●", "#00E5FF"))
-                btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none;")
+                btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none; border-radius: 6px;")
             else:
-                btn.setStyleSheet("background-color: #18202D; color: #475569; border: 1px solid #232D3F;")
+                btn.setStyleSheet("")
 
-        # Highlight Active Gesture Sign Card in Guide Matrix
+        # Highlight Active Gesture Sign Card in Guide
         for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
             is_active = (
                 cmd_key == active_car_cmd
@@ -1221,11 +1385,11 @@ class MainWindow(QMainWindow):
             if is_active:
                 color = card.property("accent_color") or "#00E5FF"
                 card.setStyleSheet(
-                    f"background-color: #1E2838; border: 2px solid {color}; border-radius: 8px; padding: 10px 12px;"
+                    f"background-color: #1E293B; border: 2px solid {color}; border-radius: 8px; padding: 8px 10px;"
                 )
             else:
                 card.setStyleSheet(
-                    "background-color: #141A24; border: 1px solid #232D3F; border-radius: 8px; padding: 10px 12px;"
+                    "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
                 )
 
     @Slot(dict)
@@ -1241,20 +1405,20 @@ class MainWindow(QMainWindow):
         self.radar_widget.update_radar(angle, dist)
 
         self.lbl_r_angle.setText(f"{angle}°")
-        self.lbl_r_dist.setText(f"{dist} cm")
-        self.lbl_r_left.setText(f"{left} cm")
-        self.lbl_r_center.setText(f"{center} cm")
-        self.lbl_r_right.setText(f"{right} cm")
+        self.lbl_r_dist.setText(f"{dist:.1f} cm" if isinstance(dist, float) else f"{dist} cm")
+        self.lbl_r_left.setText(f"{left:.0f} cm" if isinstance(left, float) else f"{left} cm")
+        self.lbl_r_center.setText(f"{center:.0f} cm" if isinstance(center, float) else f"{center} cm")
+        self.lbl_r_right.setText(f"{right:.0f} cm" if isinstance(right, float) else f"{right} cm")
 
         meta = config.RADAR_STATUS_METADATA.get(status, ("CLEAR", "🟢", "#10B981"))
         self.lbl_radar_status_badge.setText(f"{meta[1]} {meta[0]}")
         self.lbl_r_path.setText(f"RECOMMENDED: {path}")
 
-        # 2. Feed into Autonomous Navigator & 2D Mapping Engine (Tab 1)
+        # Feed into Autonomous Navigator & 2D Mapping Engine
         self.autonomous_navigator.on_radar_telemetry(data)
         self.map_2d_widget.set_sensor_reading(angle, dist)
 
-        # 3. Update Mapping Tab Telemetry Sidebar
+        # Update Mapping Tab Telemetry Sidebar
         if hasattr(self, "lbl_map_dist"):
             self.lbl_map_dist.setText(f"{dist:.1f} cm")
             self.lbl_map_angle.setText(f"{angle}°")
