@@ -4,8 +4,18 @@
  */
 
 #include <Arduino.h>
-#include "soc/soc.h"
-#include "soc/rtc_cntl_reg.h"
+
+// Safe conditional inclusion for brownout detector register on ESP32
+#if defined(ESP32)
+  #if defined(__has_include)
+    #if __has_include(<soc/soc.h>) && __has_include(<soc/rtc_cntl_reg.h>)
+      #include <soc/soc.h>
+      #include <soc/rtc_cntl_reg.h>
+      #define BROWNOUT_DETECTOR_AVAILABLE 1
+    #endif
+  #endif
+#endif
+
 #include "config.h"
 #include "wifi_manager.h"
 #include "websocket_server.h"
@@ -15,8 +25,10 @@
 #include "radar_controller.h"
 
 void setup() {
+#if defined(BROWNOUT_DETECTOR_AVAILABLE)
     // Disable hardware brownout detector (prevents ESP32 reboots from battery voltage dips when motors start)
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#endif
 
     Serial.begin(115200);
     delay(500);
