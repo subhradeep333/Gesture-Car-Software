@@ -101,6 +101,7 @@ class AutonomousNavigator(QObject):
         """Pauses autonomous exploration while keeping the current map intact."""
         if self.current_mode == self.MODE_AUTONOMOUS:
             self.is_active = False
+            self.active_command = config.CMD_STOP
             self._set_state(self.STATE_PAUSED)
             self._dispatch_command(config.CMD_STOP)
             self.status_message.emit("Autonomous mapping paused.")
@@ -118,6 +119,7 @@ class AutonomousNavigator(QObject):
     def stop_robot(self):
         """Immediately halts robot and returns to IDLE."""
         self.is_active = False
+        self.active_command = config.CMD_STOP
         self._set_state(self.STATE_IDLE)
         self._dispatch_command(config.CMD_STOP)
         self.status_message.emit("Robot stopped.")
@@ -202,11 +204,26 @@ class AutonomousNavigator(QObject):
         """
         now = time.time()
 
-        # Update odometry dead-reckoning on every tick
-        self.mapping_engine.update_odometry(self.active_command)
-
+        # 1. If autonomous navigation is paused, stopped, or in manual mode, halt odometry!
         if self.current_mode != self.MODE_AUTONOMOUS or not self.is_active:
+            if self.active_command != config.CMD_STOP:
+                self.active_command = config.CMD_STOP
+                self.mapping_engine.update_odometry(config.CMD_STOP)
             return
+
+        # 2. Advance odometry only when actively commanding movement
+        if self.active_command != config.CMD_STOP:
+            # If ESP32 is disconnected in real deployment, car cannot move physically!
+            is_offline = bool(self.websocket_manager and not self.websocket_manager.is_connected and not getattr(self, "simulation_mode", False))
+            if is_offline:
+                self.active_command = config.CMD_STOP
+                self.mapping_engine.update_odometry(config.CMD_STOP)
+                self.status_message.emit("⚠️ ESP32 is offline: motion halted to prevent false mapping.")
+                return
+            else:
+                self.mapping_engine.update_odometry(self.active_command)
+        else:
+            self.mapping_engine.update_odometry(config.CMD_STOP)
 
         # Keep-alive heartbeat: prevent ESP32 500ms safety watchdog timeout while driving
         if self.active_command != config.CMD_STOP and (now - self.last_heartbeat_time) >= self.heartbeat_interval:

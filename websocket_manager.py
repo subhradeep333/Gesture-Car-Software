@@ -49,11 +49,11 @@ class WebSocketManager(QObject):
         while self.is_running:
             try:
                 self.log_emitted.emit("WS", f"Connecting to {self.ws_url}...")
-                # Connect with compression disabled for ultra-low latency & CPU saving
+                # Connect with robust heartbeat timeouts (10s ping, 10s timeout) to prevent drops during sensor scans
                 async with websockets.connect(
                     self.ws_url, 
-                    ping_interval=1.5, 
-                    ping_timeout=1.0,
+                    ping_interval=10.0, 
+                    ping_timeout=10.0,
                     compression=None
                 ) as ws:
                     self.is_connected = True

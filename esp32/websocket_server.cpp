@@ -209,8 +209,9 @@ void setupWebSocketServer() {
     webSocket.begin();
     webSocket.onEvent(webSocketEvent);
     
-    // Enable active WebSocket heartbeat (Ping every 1.5s, 1.0s timeout, 2 fails -> reset)
-    webSocket.enableHeartbeat(1500, 1000, 2);
+    // Enable active WebSocket heartbeat (Ping every 10s, 8.0s timeout, 3 fails -> reset)
+    // Prevents disconnects during ultrasonic sweep scans
+    webSocket.enableHeartbeat(10000, 8000, 3);
 
     Serial.printf("[+] WebSocket Server Started on port %d with active Heartbeat\n", WEBSOCKET_PORT);
 }
@@ -218,8 +219,8 @@ void setupWebSocketServer() {
 void broadcastRadarTelemetry() {
     static unsigned long last_broadcast = 0;
     unsigned long now = millis();
-    if (now - last_broadcast < 60) {
-        return;  // High-rate 16 Hz telemetry stream
+    if (now - last_broadcast < 90) {
+        return;  // Stable 11 Hz telemetry stream (prevents TCP buffer overflow)
     }
     last_broadcast = now;
 
