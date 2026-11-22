@@ -4,7 +4,7 @@ Global Configuration for ESP32 Wi-Fi / WebSocket AI Hand Gesture Controlled IoT 
 
 # ESP32 Wi-Fi Access Point & WebSocket Credentials
 WIFI_SSID = "GestureCar"
-WIFI_PASS = "12345678"
+WIFI_PASS = ""  # Open Network (instant 1-click connect on Mac, zero password prompt)
 ESP32_IP = "192.168.4.1"
 WS_PORT = 81
 WS_URL = f"ws://{ESP32_IP}:{WS_PORT}"

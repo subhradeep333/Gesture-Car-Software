@@ -46,19 +46,28 @@ void setupWiFiAP() {
 
     WiFi.softAPConfig(local_IP, gateway, subnet);
 
-    // 5. Start SoftAP (SSID: "GestureCar", Pass: "12345678", Channel 1, Visible, 4 clients)
-    bool success = WiFi.softAP(WIFI_SSID, WIFI_PASS, WIFI_CHANNEL, 0, MAX_AP_CLIENTS);
+    // 5. Start SoftAP
+    // If WIFI_PASS is empty ("") or < 8 chars, start as OPEN network (instant 1-click connection on Mac, zero WPA2 failure)
+    const char* pass = (strlen(WIFI_PASS) >= 8) ? WIFI_PASS : NULL;
+    bool success = WiFi.softAP(WIFI_SSID, pass, WIFI_CHANNEL, 0, MAX_AP_CLIENTS);
 
     if (success) {
-        // Full RF transmit power for maximum signal strength and zero dropped packets
-        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        // Optimized RF transmit power (17 dBm): robust 30m range while eliminating battery voltage sags & RF brownouts
+        WiFi.setTxPower(WIFI_POWER_17dBm);
 
         Serial.println("==================================================");
         Serial.print("[WiFi] ✅ Access Point Active: ");
         Serial.println(WIFI_SSID);
         Serial.print("[WiFi] 🌐 IP Address: ");
         Serial.println(WiFi.softAPIP());
-        Serial.println("[WiFi] 🔑 Password: " WIFI_PASS);
+        if (pass != NULL) {
+            Serial.print("[WiFi] 🔑 Security: WPA2-PSK (Password: ");
+            Serial.print(pass);
+            Serial.println(")");
+        } else {
+            Serial.println("[WiFi] 🔓 Security: OPEN (Instant 1-Click Connection, No Password Required)");
+        }
+        Serial.printf("[WiFi] 📡 Channel: %d | Transmit Power: 17 dBm\n", WIFI_CHANNEL);
         Serial.println("==================================================\n");
     } else {
         Serial.println("[WiFi] ❌ ERROR: WiFi.softAP failed to start Access Point!");

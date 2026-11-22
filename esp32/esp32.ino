@@ -23,6 +23,7 @@
 #include "motor_controller.h"
 #include "safety_controller.h"
 #include "radar_controller.h"
+#include "display_buzzer_controller.h"
 
 void setup() {
 #if defined(BROWNOUT_DETECTOR_AVAILABLE)
@@ -55,6 +56,9 @@ void setup() {
     // 6. Setup Bluetooth Serial SPP Server ("GestureCar_BT")
     setupBluetoothServer();
 
+    // 7. Initialize OLED Display & Alert Buzzer
+    initDisplayAndBuzzer();
+
     Serial.println("[+] ESP32 Dual Communication System Ready!");
 }
 
@@ -71,9 +75,12 @@ void loop() {
     // 4. Continuously sweep SG90 servo & sample HC-SR04 ultrasonic distance
     scanEnvironment();
 
-    // 5. Real-time Autonomous Route Diversion if an obstacle suddenly appears while driving
+    // 5. Update Screen Telemetry & Sound Buzzer Alarms on Obstacles
+    updateDisplayAndBuzzer();
+
+    // 6. Real-time Autonomous Route Diversion if an obstacle suddenly appears while driving
     checkAutonomousObstacleAvoidance();
 
-    // 6. Check 500ms safety watchdog (auto-stops motors if signal drops)
+    // 7. Check 500ms safety watchdog (auto-stops motors if signal drops)
     checkSafetyWatchdog();
 }

@@ -10,8 +10,10 @@
 
 // Wi-Fi Access Point Credentials & RF Parameters
 #define WIFI_SSID "GestureCar"
-#define WIFI_PASS "12345678"
-#define WIFI_CHANNEL 1       // Dedicated 2.4GHz Wi-Fi Channel 1 (Low Interference)
+// Set to "" for an OPEN network (Recommended for Mac: instant 1-click connection, zero password prompts, zero "Connection failed" errors)
+// Or set to "12345678" if you require a WPA2 password.
+#define WIFI_PASS ""
+#define WIFI_CHANNEL 6       // Dedicated 2.4GHz Wi-Fi Channel 6 (Clean, low interference)
 #define MAX_AP_CLIENTS 4     // Allow up to 4 concurrent client connections
 
 // Network IP Parameters
@@ -72,5 +74,19 @@
 #define ULTRASONIC_MAX_RANGE_CM 200.0f  // Backward compatibility alias
 #define OBSTACLE_VERY_CLOSE_CM 12.0f    // Emergency stop / collision threshold (12cm)
 #define OBSTACLE_WARNING_CM 28.0f       // Obstacle scan & divert trigger threshold (28cm)
+
+// I2C OLED Display (0.96" SSD1306 128x64)
+#define ENABLE_OLED_DISPLAY 1   // 1 = Enable 0.96" SSD1306 OLED, 0 = Disable
+#define SCREEN_SDA_PIN 21       // ESP32 default I2C SDA
+#define SCREEN_SCL_PIN 22       // ESP32 default I2C SCL
+#define SCREEN_WIDTH 128        // OLED display width in pixels
+#define SCREEN_HEIGHT 64        // OLED display height in pixels
+#define OLED_RESET -1           // Reset pin (-1 if sharing ESP32 reset pin)
+#define SCREEN_ADDRESS 0x3C     // Standard I2C address (0x3C or 0x3D)
+
+// Buzzer Hardware Pin & Alert Settings
+#define ENABLE_BUZZER 1         // 1 = Enable Buzzer, 0 = Disable
+#define BUZZER_PIN 4            // Buzzer signal GPIO pin (Default: GPIO 4)
+#define BUZZER_ACTIVE_HIGH true // true = HIGH to buzz, false = LOW to buzz
 
 #endif // CONFIG_H

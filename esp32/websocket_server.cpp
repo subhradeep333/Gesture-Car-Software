@@ -9,6 +9,14 @@
 WebSocketsServer webSocket = WebSocketsServer(WEBSOCKET_PORT);
 static char current_active_cmd = 'S';
 
+void safeDelay(unsigned long ms) {
+    unsigned long start = millis();
+    while (millis() - start < ms) {
+        webSocket.loop();
+        delay(5);
+    }
+}
+
 void sendTelemetry(uint8_t num, const char* status_str) {
     StaticJsonDocument<384> doc;
     doc["status"] = status_str;
@@ -81,17 +89,17 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
                         if (strcmp(best_path, "LEFT") == 0) {
                             turnLeft(215);
-                            delay(600);
+                            safeDelay(600);
                             stopMotors();
                         } else if (strcmp(best_path, "RIGHT") == 0) {
                             turnRight(215);
-                            delay(600);
+                            safeDelay(600);
                             stopMotors();
                         } else {
                             moveBackward(215);
-                            delay(500);
+                            safeDelay(500);
                             turnLeft(215);
-                            delay(600);
+                            safeDelay(600);
                             stopMotors();
                         }
 
@@ -157,27 +165,27 @@ void checkAutonomousObstacleAvoidance() {
             Serial.println("[AUTO-AVOID] Diverting direction to LEFT...");
             turnLeft(215);
             resetSafetyWatchdog();
-            delay(600);
+            safeDelay(600);
             stopMotors();
         } else if (strcmp(best_path, "RIGHT") == 0) {
             Serial.println("[AUTO-AVOID] Diverting direction to RIGHT...");
             turnRight(215);
             resetSafetyWatchdog();
-            delay(600);
+            safeDelay(600);
             stopMotors();
         } else {
             Serial.println("[AUTO-AVOID] Both sides blocked! Reversing and turning...");
             moveBackward(215);
             resetSafetyWatchdog();
-            delay(500);
+            safeDelay(500);
             turnLeft(215);
             resetSafetyWatchdog();
-            delay(600);
+            safeDelay(600);
             stopMotors();
         }
 
         resetSafetyWatchdog();
-        delay(100);
+        safeDelay(100);
 
         // Resume forward movement in the new clear direction!
         moveForward(180);
@@ -186,22 +194,6 @@ void checkAutonomousObstacleAvoidance() {
 
         sendTelemetry(0, "AUTONOMOUS_DIVERTED");
         return;
-    }
-
-    // CASE 2: Stationary / Bench-Testing ('S') and an obstacle is placed in front (<= 28cm)
-    // Allows user to test obstacle detection & servo look-around sweep on their desk!
-    if (current_active_cmd == 'S' && isFrontBlocked() && (now - last_stationary_scan_time > 4000)) {
-        last_stationary_scan_time = now;
-        Serial.println("\n[BENCH-TEST] 🔍 Obstacle detected in front of sensor! Performing Look-Around Scan demonstration...");
-
-        float d_left = 200.0f, d_center = 200.0f, d_right = 200.0f;
-        char best_path[16] = "CENTER";
-        performScanLookAround(d_left, d_center, d_right, best_path);
-
-        Serial.printf("[BENCH-TEST] Look-around results: L=%.1fcm, C=%.1fcm, R=%.1fcm -> Best Open Path: %s\n",
-                      d_left, d_center, d_right, best_path);
-
-        sendTelemetry(0, "BENCH_SCAN_COMPLETE");
     }
 }
 

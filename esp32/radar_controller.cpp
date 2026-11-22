@@ -1,5 +1,6 @@
 #include "radar_controller.h"
 #include "config.h"
+#include "websocket_server.h"
 #include <esp_arduino_version.h>
 
 static int current_angle = 90;
@@ -205,25 +206,25 @@ void performScanLookAround(float &out_left, float &out_center, float &out_right,
 
     // 1. Move servo to RIGHT (40°) & sample clear space
     updateServo(40);
-    delay(280);
+    safeDelay(280);
     out_right = readDistance();
-    delay(20);
+    safeDelay(20);
     float r2 = readDistance();
     out_right = min(out_right, r2);
     Serial.printf("[RADAR] -> RIGHT Clearance (40°): %.1f cm\n", out_right);
 
     // 2. Move servo to LEFT (140°) & sample clear space
     updateServo(140);
-    delay(340);
+    safeDelay(340);
     out_left = readDistance();
-    delay(20);
+    safeDelay(20);
     float l2 = readDistance();
     out_left = min(out_left, l2);
     Serial.printf("[RADAR] -> LEFT Clearance (140°): %.1f cm\n", out_left);
 
     // 3. Move servo back to CENTER (90°) & sample front
     updateServo(90);
-    delay(280);
+    safeDelay(280);
     out_center = readDistance();
     Serial.printf("[RADAR] -> CENTER Clearance (90°): %.1f cm\n", out_center);
 
