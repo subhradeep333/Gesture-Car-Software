@@ -213,8 +213,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
-        # Prime in Autonomous Mapping mode by default
-        self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS)
+        # Prime in Manual Hand Gesture Control mode by default
+        self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL)
 
         # Timer for 60 FPS video and tracking pipeline loop (~16ms)
         self.timer = QTimer(self)
@@ -346,50 +346,74 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(actions_card)
 
-        # Active Gesture Guide Card (✌️ Return To Start)
+        # Active Gesture Guide Card
         guide_card = QFrame()
         guide_card.setProperty("class", "Card")
         guide_layout = QVBoxLayout(guide_card)
-        guide_layout.setContentsMargins(12, 10, 12, 10)
+        guide_layout.setContentsMargins(10, 8, 10, 8)
         guide_layout.setSpacing(6)
 
         g_hdr = QHBoxLayout()
-        g_title = QLabel("✌️ ACTIVE GESTURE RECOGNITION")
+        g_title = QLabel("🖐️ LIVE HAND GESTURE CONTROLS")
         g_title.setProperty("class", "SectionHeader")
         g_hdr.addWidget(g_title)
 
-        g_tip = QLabel("Return-To-Home")
+        g_tip = QLabel("Direct Drive Mode")
         g_tip.setStyleSheet("font-size: 11px; font-weight: 700; color: #00E5FF;")
         g_hdr.addWidget(g_tip, alignment=Qt.AlignRight)
         guide_layout.addLayout(g_hdr)
 
         self.gesture_guide_cards = {}
+        signs_grid = QGridLayout()
+        signs_grid.setSpacing(6)
 
-        item_card = QFrame()
-        item_card.setProperty("accent_color", "#00E5FF")
-        item_card.setStyleSheet(
-            "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
-        )
-        i_layout = QVBoxLayout(item_card)
-        i_layout.setContentsMargins(8, 6, 8, 6)
-        i_layout.setSpacing(4)
+        gesture_cards_data = [
+            # (row, col, cmd_key, icon, title, sign_desc, motor_action, hex_color)
+            (0, 0, config.CMD_FORWARD, "☝️", "FORWARD", "Index finger UP", "Drive forward", "#2ECC71"),
+            (0, 1, config.CMD_STOP, "✋", "STOP", "Open Palm", "Halt motors", "#E67E22"),
+            (0, 2, config.CMD_EMERGENCY_STOP, "✊", "EMERGENCY", "Closed Fist", "Emergency brake", "#E74C3C"),
+            (1, 0, config.CMD_LEFT, "👈", "LEFT", "Point LEFT", "Turn left", "#F39C12"),
+            (1, 1, config.CMD_BACKWARD, "👇", "BACKWARD", "Point DOWN", "Drive reverse", "#3498DB"),
+            (1, 2, config.CMD_RIGHT, "👉", "RIGHT", "Point RIGHT", "Turn right", "#9B59B6"),
+            (2, 0, config.CMD_RETURN_HOME, "✌️", "RETURN HOME", "Two Fingers (V-Sign)", "Auto Return to Start (0, 0)", "#00E5FF"),
+        ]
 
-        lbl_title = QLabel("✌️ <span style='color: #00E5FF; font-weight: 800; font-size: 13px;'>RETURN TO START (HOMING)</span> <span style='color: #64748B; font-size: 11px;'>[H]</span>")
-        lbl_title.setTextFormat(Qt.RichText)
-        i_layout.addWidget(lbl_title)
+        for row, col, cmd_key, icon, title, sign_desc, motor_action, hex_col in gesture_cards_data:
+            item_card = QFrame()
+            item_card.setProperty("accent_color", hex_col)
+            item_card.setStyleSheet(
+                "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 6px 8px;"
+            )
+            i_layout = QVBoxLayout(item_card)
+            i_layout.setContentsMargins(6, 6, 6, 6)
+            i_layout.setSpacing(2)
 
-        lbl_sign = QLabel("Hold up two fingers (V-Sign / Peace Sign)")
-        lbl_sign.setStyleSheet("font-size: 12px; font-weight: 600; color: #F8FAFC;")
-        i_layout.addWidget(lbl_sign)
+            lbl_title = QLabel(f"{icon} <span style='color: {hex_col}; font-weight: 800;'>{title}</span> <span style='color: #64748B; font-size: 10px;'>[{cmd_key}]</span>")
+            lbl_title.setTextFormat(Qt.RichText)
+            lbl_title.setStyleSheet("font-size: 11px;")
+            i_layout.addWidget(lbl_title)
 
-        lbl_act = QLabel("⚡ Autonomous closed-loop homing: calls robotic car back to start (0, 0)")
-        lbl_act.setStyleSheet("font-size: 11px; font-weight: 500; color: #38BDF8;")
-        lbl_act.setWordWrap(True)
-        i_layout.addWidget(lbl_act)
+            lbl_sign = QLabel(sign_desc)
+            lbl_sign.setStyleSheet("font-size: 10px; font-weight: 600; color: #CBD5E1;")
+            lbl_sign.setWordWrap(True)
+            i_layout.addWidget(lbl_sign)
+
+            lbl_act = QLabel(f"⚡ {motor_action}")
+            lbl_act.setStyleSheet("font-size: 9px; font-weight: 500; color: #64748B;")
+            lbl_act.setWordWrap(True)
+            i_layout.addWidget(lbl_act)
+
+            if cmd_key == config.CMD_RETURN_HOME:
+                signs_grid.addWidget(item_card, row, col, 1, 3)
+            else:
+                signs_grid.addWidget(item_card, row, col)
+            self.gesture_guide_cards[cmd_key] = item_card
+
+        guide_layout.addLayout(signs_grid)
 
         # Live gesture status banner & confidence progress bar
         status_row = QHBoxLayout()
-        self.lbl_gesture_detect_state = QLabel("👀 Awaiting ✌️ gesture in camera view...")
+        self.lbl_gesture_detect_state = QLabel("👀 Awaiting hand gesture in camera view...")
         self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
         status_row.addWidget(self.lbl_gesture_detect_state)
 
@@ -399,25 +423,7 @@ class MainWindow(QMainWindow):
         self.bar_gesture_live_conf.setFixedHeight(10)
         self.bar_gesture_live_conf.setFixedWidth(100)
         status_row.addWidget(self.bar_gesture_live_conf, alignment=Qt.AlignRight)
-        i_layout.addLayout(status_row)
-
-        self.gesture_guide_cards[config.CMD_RETURN_HOME] = item_card
-        guide_layout.addWidget(item_card)
-
-        # Notice Card
-        note_card = QFrame()
-        note_card.setStyleSheet("background-color: #0F172A; border: 1px dashed #334155; border-radius: 6px; padding: 6px 8px;")
-        n_layout = QVBoxLayout(note_card)
-        n_layout.setContentsMargins(4, 4, 4, 4)
-        n_layout.setSpacing(2)
-        n_title = QLabel("🤖 Autonomous Navigation Mode")
-        n_title.setStyleSheet("font-size: 11px; font-weight: 700; color: #94A3B8;")
-        n_desc = QLabel("Directional gestures are cleared. Autonomous mapping guides the vehicle, and ✌️ triggers Return-To-Home.")
-        n_desc.setStyleSheet("font-size: 10px; color: #64748B;")
-        n_desc.setWordWrap(True)
-        n_layout.addWidget(n_title)
-        n_layout.addWidget(n_desc)
-        guide_layout.addWidget(note_card)
+        guide_layout.addLayout(status_row)
 
         left_layout.addWidget(guide_card, stretch=2)
 
@@ -473,14 +479,15 @@ class MainWindow(QMainWindow):
         lbl_mode.setStyleSheet("font-size: 11px; font-weight: 800; color: #94A3B8; letter-spacing: 0.5px;")
         r1_layout.addWidget(lbl_mode)
 
-        self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS NAVIGATION")
-        self.btn_mode_auto.setStyleSheet("background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px; padding: 4px 12px;")
-        self.btn_mode_auto.setEnabled(False)  # Static status badge
-        r1_layout.addWidget(self.btn_mode_auto)
+        self.btn_mode_manual = QPushButton("🖐️ MANUAL GESTURE")
+        self.btn_mode_manual.setCursor(Qt.PointingHandCursor)
+        self.btn_mode_manual.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL))
+        r1_layout.addWidget(self.btn_mode_manual)
 
-        # Hidden for backward compatibility with tests
-        self.btn_mode_manual = QPushButton()
-        self.btn_mode_manual.setVisible(False)
+        self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS MAPPING")
+        self.btn_mode_auto.setCursor(Qt.PointingHandCursor)
+        self.btn_mode_auto.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS))
+        r1_layout.addWidget(self.btn_mode_auto)
 
         r1_layout.addStretch()
 
@@ -733,18 +740,32 @@ class MainWindow(QMainWindow):
         layout.addLayout(split_layout, stretch=1)
 
     def _on_nav_mode_changed(self, mode):
-        self.btn_mode_auto.setText("🤖 AUTONOMOUS NAVIGATION")
-        self.btn_mode_auto.setStyleSheet("background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px; padding: 4px 12px;")
         if mode == AutonomousNavigator.MODE_AUTONOMOUS:
+            self.btn_mode_auto.setStyleSheet(
+                "background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; "
+                "font-weight: bold; border-radius: 6px; padding: 4px 12px;"
+            )
+            self.btn_mode_manual.setStyleSheet(
+                "background-color: #111827; color: #94A3B8; border: 1px solid #1E293B; "
+                "font-weight: normal; border-radius: 6px; padding: 4px 12px;"
+            )
             self.lbl_nav_state_badge.setText("● AUTONOMOUS MODE")
             self.lbl_nav_state_badge.setStyleSheet(
                 "background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; "
                 "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
             )
         else:
-            self.lbl_nav_state_badge.setText("● STANDBY")
+            self.btn_mode_manual.setStyleSheet(
+                "background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; "
+                "font-weight: bold; border-radius: 6px; padding: 4px 12px;"
+            )
+            self.btn_mode_auto.setStyleSheet(
+                "background-color: #111827; color: #94A3B8; border: 1px solid #1E293B; "
+                "font-weight: normal; border-radius: 6px; padding: 4px 12px;"
+            )
+            self.lbl_nav_state_badge.setText("● MANUAL GESTURE")
             self.lbl_nav_state_badge.setStyleSheet(
-                "background-color: #141A24; color: #94A3B8; border: 1px solid #232D3F; "
+                "background-color: #142E35; color: #10B981; border: 1px solid #10B981; "
                 "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
             )
 
@@ -1549,18 +1570,16 @@ class MainWindow(QMainWindow):
         conf_pct = int(confidence * 100.0) if detected else 0
         self.bar_conf.setValue(conf_pct)
 
-        # Update dedicated ✌️ gesture live detection status
-        is_homing_detected = (candidate_gesture == config.CMD_RETURN_HOME and detected)
-        if is_homing_detected != self._last_homing_detected_state:
-            self._last_homing_detected_state = is_homing_detected
-            if is_homing_detected:
-                self.lbl_gesture_detect_state.setText("✌️ V-SIGN DETECTED (Calling Home)")
-                self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 800; color: #00E5FF;")
-            else:
-                self.lbl_gesture_detect_state.setText("👀 Awaiting ✌️ gesture in camera view...")
-                self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
-
-        self.bar_gesture_live_conf.setValue(conf_pct if is_homing_detected else 0)
+        # Update live gesture detection status & confidence progress bar
+        if detected and candidate_gesture in config.GESTURE_METADATA and candidate_gesture not in ["NONE", "UNKNOWN"]:
+            g_meta = config.GESTURE_METADATA[candidate_gesture]
+            self.lbl_gesture_detect_state.setText(f"{g_meta[1]} {g_meta[0]} DETECTED ({conf_pct}%)")
+            self.lbl_gesture_detect_state.setStyleSheet(f"font-size: 11px; font-weight: 800; color: {g_meta[2]};")
+            self.bar_gesture_live_conf.setValue(conf_pct)
+        else:
+            self.lbl_gesture_detect_state.setText("👀 Awaiting hand gesture in camera view...")
+            self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
+            self.bar_gesture_live_conf.setValue(0)
 
         if active_car_cmd != self._last_rendered_cmd:
             self._last_rendered_cmd = active_car_cmd
@@ -1596,22 +1615,23 @@ class MainWindow(QMainWindow):
             candidate_gesture == config.CMD_RETURN_HOME
             or self.autonomous_navigator.current_state == AutonomousNavigator.STATE_HOMING
         )
-        active_card_key = (active_car_cmd, is_homing_active)
+        active_card_key = (active_car_cmd, is_homing_active, candidate_gesture, detected)
         if active_card_key != self._last_rendered_active_card_key:
             self._last_rendered_active_card_key = active_card_key
             for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
                 is_active = (
                     cmd_key == active_car_cmd
                     or (cmd_key == config.CMD_RETURN_HOME and is_homing_active)
+                    or (cmd_key == candidate_gesture and detected)
                 )
                 if is_active:
                     color = card.property("accent_color") or "#00E5FF"
                     card.setStyleSheet(
-                        f"background-color: #1E293B; border: 2px solid {color}; border-radius: 8px; padding: 8px 10px;"
+                        f"background-color: #1E293B; border: 2px solid {color}; border-radius: 8px; padding: 6px 8px;"
                     )
                 else:
                     card.setStyleSheet(
-                        "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
+                        "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 6px 8px;"
                     )
 
     @Slot(dict)
