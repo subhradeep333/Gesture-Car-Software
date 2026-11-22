@@ -56,15 +56,11 @@
 #define ACCEL_STEP_PWM 10       // Speed step increment per tick
 #define RAMP_INTERVAL_MS 5      // Smooth 5ms ramp interval (~90ms 0->180 accel)
 
-// VL53L0X Laser Time-of-Flight (ToF) Sensor & SG90 Servo Hardware Pinout
-#define I2C_SDA_PIN 21      // VL53L0X I2C Data Pin (GPIO 21 / D21)
-#define I2C_SCL_PIN 22      // VL53L0X I2C Clock Pin (GPIO 22 / D22)
-#define SERVO_PIN 13        // SG90 Servo Signal Pin (GPIO 13 / D13)
-#define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
-
-// Legacy Ultrasonic Fallback Pins (HC-SR04)
+// HC-SR04 Ultrasonic Sensor & SG90 Servo Hardware Pinout
 #define TRIG_PIN 5          // HC-SR04 Trigger Pin (D5)
 #define ECHO_PIN 19         // HC-SR04 Echo Pin (D19)
+#define SERVO_PIN 13        // SG90 Servo Signal Pin (GPIO 13 / D13)
+#define PWM_CHANNEL_SERVO 2 // LEDC Channel for SG90 Servo
 
 // Radar & Obstacle Avoidance Configuration Parameters
 #define SERVO_MIN_ANGLE 40         // Rightmost scan angle (degrees)

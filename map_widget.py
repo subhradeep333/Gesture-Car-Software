@@ -486,7 +486,7 @@ class Map2DWidget(QWidget):
         painter.drawText(22, 28, f"ROBOT POSE: X={rx:+.1f}cm  Y={ry:+.1f}cm")
 
         painter.setPen(QColor("#94A3B8"))
-        painter.drawText(22, 44, f"HEADING: {r_heading:.0f}° | TOF LASER: {self.current_sensor_dist:.0f}cm")
+        painter.drawText(22, 44, f"HEADING: {r_heading:.0f}° | ULTRASONIC: {self.current_sensor_dist:.0f}cm")
 
         explored, total, pct, area_m2 = self.mapping_engine.get_explored_stats()
         n_obs = len(getattr(self.mapping_engine, "detected_obstacles", []))

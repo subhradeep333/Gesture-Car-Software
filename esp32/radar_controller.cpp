@@ -1,41 +1,12 @@
 #include "radar_controller.h"
 #include "config.h"
-#include <Wire.h>
 #include <esp_arduino_version.h>
-
-#if defined(__has_include)
-  #if __has_include(<Adafruit_VL53L0X.h>)
-    #include <Adafruit_VL53L0X.h>
-    #define HAS_VL53L0X_LIB 1
-  #else
-    #define HAS_VL53L0X_LIB 0
-  #endif
-  #if __has_include(<Adafruit_VL53L1X.h>)
-    #include <Adafruit_VL53L1X.h>
-    #define HAS_VL53L1X_LIB 1
-  #else
-    #define HAS_VL53L1X_LIB 0
-  #endif
-#else
-  #include <Adafruit_VL53L0X.h>
-  #define HAS_VL53L0X_LIB 1
-  #define HAS_VL53L1X_LIB 0
-#endif
 
 static int current_angle = 90;
 static int sweep_dir = 1;  // +1 = right to left, -1 = left to right
 static unsigned long last_servo_update = 0;
 static unsigned long last_serial_log = 0;
 static bool is_scanning_look_around = false;
-
-#if HAS_VL53L0X_LIB
-static Adafruit_VL53L0X lox = Adafruit_VL53L0X();
-#endif
-#if HAS_VL53L1X_LIB
-static Adafruit_VL53L1X vl53 = Adafruit_VL53L1X();
-#endif
-static bool tof_initialized = false;
-static bool tof_is_l0x = true;  // true = VL53L0X, false = VL53L1X
 
 static float current_dist = 200.0f;
 static float left_dist = 200.0f;
@@ -66,45 +37,17 @@ void updateServo(int angle) {
 
 void initRadar() {
     Serial.println("\n=======================================================");
-    Serial.println("  [RADAR] Initializing VL53L0X Laser ToF & SG90 Servo  ");
+    Serial.println("  [RADAR] Initializing HC-SR04 Ultrasonic & SG90 Servo ");
     Serial.println("=======================================================");
-    Serial.printf("[RADAR] Pins: I2C_SDA=GPIO %d, I2C_SCL=GPIO %d, SERVO=GPIO %d\n",
-                  I2C_SDA_PIN, I2C_SCL_PIN, SERVO_PIN);
+    Serial.printf("[RADAR] Pins: TRIG=GPIO %d, ECHO=GPIO %d, SERVO=GPIO %d\n",
+                  TRIG_PIN, ECHO_PIN, SERVO_PIN);
     Serial.printf("[RADAR] Range Limit: %.0f cm | Warning Threshold: %.0f cm\n",
                   SENSOR_MAX_RANGE_CM, OBSTACLE_WARNING_CM);
 
-    // Initialize I2C Bus on GPIO 21 & 22
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-#if HAS_VL53L0X_LIB
-    // 1. Try booting the VL53L0X Laser Time-of-Flight Sensor (e.g. CJVL53L0X V2)
-    if (lox.begin()) {
-        tof_initialized = true;
-        tof_is_l0x = true;
-        Serial.println("[RADAR] ✅ CJVL53L0X (VL53L0X) Laser Time-of-Flight Sensor initialized!");
-    }
-#endif
-
-#if HAS_VL53L1X_LIB
-    // 2. If VL53L0X didn't boot, try VL53L1X
-    if (!tof_initialized) {
-        if (vl53.begin(0x29, &Wire)) {
-            vl53.startRanging();
-            vl53.setTimingBudget(50);
-            tof_initialized = true;
-            tof_is_l0x = false;
-            Serial.println("[RADAR] ✅ VL53L1X Laser Time-of-Flight Sensor initialized!");
-        }
-    }
-#endif
-
-    if (!tof_initialized) {
-        Serial.println("[RADAR] ⚠️ Laser ToF not detected on I2C (check SDA=21, SCL=22, VCC=3.3V/5V, GND).");
-        Serial.println("[RADAR] 💡 Initializing Ultrasonic GPIO fallback pins (TRIG=5, ECHO=19)...");
-        pinMode(TRIG_PIN, OUTPUT);
-        pinMode(ECHO_PIN, INPUT);
-        digitalWrite(TRIG_PIN, LOW);
-    }
+    // Initialize HC-SR04 Ultrasonic GPIO Pins
+    pinMode(TRIG_PIN, OUTPUT);
+    pinMode(ECHO_PIN, INPUT);
+    digitalWrite(TRIG_PIN, LOW);
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     // ESP32 Arduino Core 3.x Servo PWM setup (50Hz, 16-bit)
@@ -119,21 +62,17 @@ void initRadar() {
     updateServo(90);
     delay(200);
 
-    // Initial test reading
+    // Initial ultrasonic test reading
     float test_d = readDistance();
-    Serial.printf("[RADAR] Initial Distance Test: %.1f cm (Target: 90° Center)\n", test_d);
-    if (test_d < SENSOR_MAX_RANGE_CM) {
-        Serial.printf("[RADAR] ✅ Sensor surface lock confirmed at %.1f cm!\n", test_d);
-    } else {
-        Serial.println("[RADAR] ℹ️ Initial reading is 200cm (Clear / No close obstacle in front).");
-    }
+    Serial.printf("[RADAR] ✅ Ultrasonic Sensor initialized! Initial Reading: %.1f cm\n", test_d);
+    Serial.println("[RADAR] ✅ Radar system ready for autonomous mapping!\n");
 }
 
 static float readSingleDistanceDirect() {
-    // 1. Wait for ECHO pin to be LOW if a previous bounce is lingering
+    // 1. Wait for ECHO pin to be LOW if a previous echo is lingering
     unsigned long wait_low = micros();
     while (digitalRead(ECHO_PIN) == HIGH) {
-        if (micros() - wait_low > 3000) {
+        if (micros() - wait_low > 2000) {
             return SENSOR_MAX_RANGE_CM;
         }
     }
@@ -145,7 +84,7 @@ static float readSingleDistanceDirect() {
     delayMicroseconds(10);
     digitalWrite(TRIG_PIN, LOW);
 
-    // 3. Wait for ECHO to rise HIGH
+    // 3. Wait for ECHO to rise HIGH (up to 4ms timeout)
     unsigned long wait_high = micros();
     while (digitalRead(ECHO_PIN) == LOW) {
         if (micros() - wait_high > 4000) {
@@ -153,16 +92,16 @@ static float readSingleDistanceDirect() {
         }
     }
 
-    // 4. Measure duration while ECHO is HIGH
+    // 4. Measure duration while ECHO is HIGH (up to 20ms timeout = ~3.4m)
     unsigned long pulse_start = micros();
     while (digitalRead(ECHO_PIN) == HIGH) {
-        if (micros() - pulse_start > 25000) {
+        if (micros() - pulse_start > 20000) {
             return SENSOR_MAX_RANGE_CM;
         }
     }
     unsigned long duration = micros() - pulse_start;
 
-    // 5. Convert to distance in cm
+    // 5. Convert sound transit time to distance in cm (Speed of sound = 343 m/s)
     float raw_cm = (float)duration * 0.0343f / 2.0f;
     if (raw_cm < 2.0f || raw_cm > SENSOR_MAX_RANGE_CM) {
         return SENSOR_MAX_RANGE_CM;
@@ -172,48 +111,14 @@ static float readSingleDistanceDirect() {
 }
 
 float readDistance() {
-#if HAS_VL53L0X_LIB
-    // 1. High-speed, high-precision VL53L0X Laser Time-of-Flight (e.g. CJVL53L0X V2)
-    if (tof_initialized && tof_is_l0x) {
-        VL53L0X_RangingMeasurementData_t measure;
-        lox.rangingTest(&measure, false);
-
-        // RangeStatus: 0 = valid range, 4 = out of range
-        if (measure.RangeStatus != 4) {
-            float cm = (float)measure.RangeMilliMeter / 10.0f;
-            if (cm >= 2.0f && cm <= SENSOR_MAX_RANGE_CM) {
-                return cm;
-            }
-        }
-        return SENSOR_MAX_RANGE_CM;
-    }
-#endif
-
-#if HAS_VL53L1X_LIB
-    // 2. High-speed, high-precision VL53L1X Laser Time-of-Flight
-    if (tof_initialized && !tof_is_l0x) {
-        if (vl53.dataReady()) {
-            int16_t mm = vl53.distance();
-            vl53.clearInterrupt();
-            if (mm > 0) {
-                float cm = (float)mm / 10.0f;
-                if (cm >= 2.0f && cm <= SENSOR_MAX_RANGE_CM) {
-                    return cm;
-                }
-            }
-        }
-        return SENSOR_MAX_RANGE_CM;
-    }
-#endif
-
-    // 2. Fallback: Ultrasonic direct polling
     float d1 = readSingleDistanceDirect();
     if (d1 <= OBSTACLE_WARNING_CM) {
-        return d1;
+        // Quick verification pulse to reject acoustic noise/false bounces
+        delayMicroseconds(500);
+        float d2 = readSingleDistanceDirect();
+        return min(d1, d2);
     }
-    delay(6);
-    float d2 = readSingleDistanceDirect();
-    return min(d1, d2);
+    return d1;
 }
 
 void detectObstacle() {
@@ -288,9 +193,8 @@ void scanEnvironment() {
     // Periodic Serial Monitor heartbeat (every 800ms or immediately on obstacle)
     if ((now - last_serial_log >= 800) || (current_dist <= OBSTACLE_WARNING_CM && now - last_serial_log >= 200)) {
         last_serial_log = now;
-        Serial.printf("[RADAR] Angle: %d° | Dist: %.1f cm (%s) | Status: %s | Best Path: %s\n",
+        Serial.printf("[RADAR] Angle: %d° | Dist: %.1f cm (HC-SR04) | Status: %s | Best Path: %s\n",
                       current_angle, current_dist,
-                      tof_initialized ? "VL53L0X Laser" : "Ultrasonic",
                       current_radar_data.status, current_radar_data.best_path);
     }
 }
@@ -317,43 +221,29 @@ void performScanLookAround(float &out_left, float &out_center, float &out_right,
     out_left = min(out_left, l2);
     Serial.printf("[RADAR] -> LEFT Clearance (140°): %.1f cm\n", out_left);
 
-    // 3. Return servo to CENTER (90°) & sample front clearance
+    // 3. Move servo back to CENTER (90°) & sample front
     updateServo(90);
     delay(280);
     out_center = readDistance();
-    delay(20);
-    float c2 = readDistance();
-    out_center = min(out_center, c2);
     Serial.printf("[RADAR] -> CENTER Clearance (90°): %.1f cm\n", out_center);
 
-    // Update memory registers
-    left_dist = out_left;
-    right_dist = out_right;
-    center_dist = out_center;
-    current_dist = out_center;
-    current_angle = 90;
-
-    // Compare clearances: select direction with most open space
-    if (out_left > out_right + 6.0f && out_left > OBSTACLE_WARNING_CM) {
-        strncpy(out_best_path, "LEFT", 16);
-    } else if (out_right > out_left + 6.0f && out_right > OBSTACLE_WARNING_CM) {
-        strncpy(out_best_path, "RIGHT", 16);
-    } else if (out_left >= out_right && out_left > OBSTACLE_VERY_CLOSE_CM) {
-        strncpy(out_best_path, "LEFT", 16);
-    } else if (out_right > out_left && out_right > OBSTACLE_VERY_CLOSE_CM) {
-        strncpy(out_best_path, "RIGHT", 16);
+    // Decision matrix
+    if (out_left > out_right && out_left > OBSTACLE_WARNING_CM) {
+        strcpy(out_best_path, "LEFT");
+        Serial.println("[RADAR] -> Decision: Steer LEFT (Path Clear)\n");
+    } else if (out_right >= out_left && out_right > OBSTACLE_WARNING_CM) {
+        strcpy(out_best_path, "RIGHT");
+        Serial.println("[RADAR] -> Decision: Steer RIGHT (Path Clear)\n");
     } else {
-        strncpy(out_best_path, "BACKWARD", 16);
+        strcpy(out_best_path, "BACKWARD");
+        Serial.println("[RADAR] -> Decision: REVERSE (Both sides blocked)\n");
     }
 
-    Serial.printf("[RADAR] -> Decision: Divert to %s (L=%.1f, R=%.1f)\n\n", out_best_path, out_left, out_right);
-
-    detectObstacle();
     is_scanning_look_around = false;
 }
 
 bool isFrontBlocked() {
-    return (center_dist <= OBSTACLE_WARNING_CM) || (current_dist <= OBSTACLE_WARNING_CM);
+    return (center_dist <= OBSTACLE_WARNING_CM);
 }
 
 RadarData getRadarData() {

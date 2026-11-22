@@ -426,7 +426,7 @@ class AutonomousNavigator(QObject):
                 self.status_message.emit(f"Route: Aligning to Waypoint #{self.current_waypoint_idx + 1} ({ang_diff:+.0f}°) | {dist:.0f}cm")
                 return
 
-            # 2. Check laser front clearance
+            # 2. Check ultrasonic front clearance
             effective_center = min(self.center_dist, self.current_dist if abs(self.current_angle - 90) <= 25 else self.center_dist)
             if effective_center < self.critical_distance_cm:
                 self._dispatch_command(config.CMD_STOP)

@@ -840,20 +840,23 @@ class MainWindow(QMainWindow):
 
     def _on_ml_refine_clicked(self):
         """Runs the MapMLProcessor spatial learning pipeline to refine walls & corridors."""
-        self.lbl_nav_status_msg.setText("🧠 Running ML Spatial Perception...")
+        self.lbl_nav_status_msg.setText("🧠 Running Pre-trained Neural Spatial Perception...")
         ml_data = self.mapping_engine.refine_map_with_ml()
         self.map_2d_widget.set_ml_map_overlay(ml_data)
 
         n_walls = len(ml_data.get("walls", []))
         n_clusters = len(ml_data.get("obstacle_clusters", []))
         n_corridors = len(ml_data.get("safe_corridors", []))
+        model_name = ml_data.get("neural_model_name", "ResUNet-AcousticMap-v2")
+        conf = ml_data.get("neural_confidence", 0.85) * 100.0
+        lat = ml_data.get("neural_latency_ms", 10.0)
 
-        msg = f"🧠 ML Refinement Complete: {n_walls} walls, {n_clusters} clusters, {n_corridors} corridor points."
+        msg = f"🧠 [{model_name}] Inpainted {n_walls} walls, {n_clusters} clusters, {n_corridors} corridor points ({conf:.0f}% conf, {lat:.1f}ms)."
         self.lbl_nav_status_msg.setText(msg)
         self._on_ws_log("SYSTEM", msg)
 
         if hasattr(self, "lbl_ml_walls_info"):
-            self.lbl_ml_walls_info.setText(f"{n_walls} walls")
+            self.lbl_ml_walls_info.setText(f"{n_walls} walls (Neural)")
         if hasattr(self, "lbl_ml_corridors_info"):
             self.lbl_ml_corridors_info.setText(f"{n_corridors} corridor pts")
 

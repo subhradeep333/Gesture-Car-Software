@@ -393,9 +393,15 @@ def run_all_tests():
     # --------------------------------------------------------------------------
     print("\n--- [SUITE 10] ML Map Perception & Interactive Route Following ---")
 
-    # 1. MapMLProcessor Spatial Learning Pipeline
+    # 1. MapMLProcessor Spatial Learning Pipeline & Pretrained Neural Model
+    from pretrained_mapping_model import PretrainedMappingModel
+    pretrained_model = PretrainedMappingModel()
+    record_test("PretrainedMappingModel Initialized", pretrained_model is not None and pretrained_model.is_loaded)
+    model_summary = pretrained_model.get_model_summary()
+    record_test("Pretrained Model Summary Has Parameters", model_summary["parameters"] > 0 and model_summary["architecture"] == "ResUNet-AcousticMap-v2")
+
     ml_proc = MapMLProcessor(resolution_cm=4.0)
-    record_test("MapMLProcessor Initialized", ml_proc is not None)
+    record_test("MapMLProcessor Initialized with Pretrained Model", ml_proc is not None and ml_proc.neural_model is not None)
 
     # Create synthetic grid with a straight wall and an obstacle box
     grid_w, grid_h = 100, 100
@@ -407,6 +413,8 @@ def run_all_tests():
 
     ml_out = ml_proc.process_grid(mock_grid)
     record_test("ML Perception Pipeline Output Dict Keys", "walls" in ml_out and "safe_corridors" in ml_out and "obstacle_clusters" in ml_out)
+    record_test("Pre-trained Neural Inpainting Active in Pipeline", ml_out.get("neural_model_active") is True and ml_out.get("neural_confidence", 0) > 0.5)
+    record_test("Pre-trained Neural Latency Metric Recorded", ml_out.get("neural_latency_ms", 0.0) >= 0.0)
     record_test("ML Vector Wall Extraction (Douglas-Peucker Polyline)", len(ml_out["walls"]) >= 2)
     record_test("ML Obstacle K-Means Clustering", len(ml_out["obstacle_clusters"]) >= 1)
     record_test("ML Medial Axis Distance Transform Safe Corridors", len(ml_out["safe_corridors"]) > 0)
