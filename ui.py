@@ -197,7 +197,24 @@ class MainWindow(QMainWindow):
         self.mapping_engine.map_updated.connect(self._on_mapping_stats_updated)
         self.mapping_engine.obstacle_detected.connect(self._on_obstacle_detected)
 
+        # UI State & Debounce / Latch Caches for rock-solid 60 FPS rendering
+        self._homing_trigger_latched = False
+        self._last_homing_trigger_time = 0.0
+        self._homing_cooldown = 2.5
+        self._last_rendered_gesture = None
+        self._last_homing_detected_state = None
+        self._last_rendered_cmd = None
+        self._last_rendered_safety = None
+        self._last_rendered_active_card_key = None
+        self._last_rendered_nav_state = None
+        self._last_rendered_status_msg = None
+        self._last_fps_update_time = 0.0
+        self._last_res_badge_time = 0.0
+
         self._build_ui()
+
+        # Prime in Autonomous Mapping mode by default
+        self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS)
 
         # Timer for 60 FPS video and tracking pipeline loop (~16ms)
         self.timer = QTimer(self)
@@ -448,7 +465,7 @@ class MainWindow(QMainWindow):
         tb_layout.setContentsMargins(10, 8, 10, 8)
         tb_layout.setSpacing(8)
 
-        # Row 1: Mode Switch & Viewport Navigation
+        # Row 1: Mode Indicator & Viewport Navigation
         r1_layout = QHBoxLayout()
         r1_layout.setSpacing(8)
 
@@ -456,18 +473,14 @@ class MainWindow(QMainWindow):
         lbl_mode.setStyleSheet("font-size: 11px; font-weight: 800; color: #94A3B8; letter-spacing: 0.5px;")
         r1_layout.addWidget(lbl_mode)
 
-        self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS MAPPING")
-        self.btn_mode_auto.setCheckable(True)
-        self.btn_mode_auto.setChecked(False)
-        self.btn_mode_auto.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_AUTONOMOUS))
+        self.btn_mode_auto = QPushButton("🤖 AUTONOMOUS NAVIGATION")
+        self.btn_mode_auto.setStyleSheet("background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px; padding: 4px 12px;")
+        self.btn_mode_auto.setEnabled(False)  # Static status badge
         r1_layout.addWidget(self.btn_mode_auto)
 
-        self.btn_mode_manual = QPushButton("🖐️ MANUAL GESTURE")
-        self.btn_mode_manual.setCheckable(True)
-        self.btn_mode_manual.setChecked(True)
-        self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
-        self.btn_mode_manual.clicked.connect(lambda: self.autonomous_navigator.set_mode(AutonomousNavigator.MODE_MANUAL))
-        r1_layout.addWidget(self.btn_mode_manual)
+        # Hidden for backward compatibility with tests
+        self.btn_mode_manual = QPushButton()
+        self.btn_mode_manual.setVisible(False)
 
         r1_layout.addStretch()
 
@@ -512,7 +525,7 @@ class MainWindow(QMainWindow):
 
         self.btn_home = QPushButton("🏠 Return Home (✌️)")
         self.btn_home.setStyleSheet("background-color: #0F2D38; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px;")
-        self.btn_home.clicked.connect(self.autonomous_navigator.return_to_home)
+        self.btn_home.clicked.connect(self._on_btn_home_clicked)
         r2_layout.addWidget(self.btn_home)
 
         self.btn_stop_map = QPushButton("⏹ Stop Robot")
@@ -720,28 +733,35 @@ class MainWindow(QMainWindow):
         layout.addLayout(split_layout, stretch=1)
 
     def _on_nav_mode_changed(self, mode):
+        self.btn_mode_auto.setText("🤖 AUTONOMOUS NAVIGATION")
+        self.btn_mode_auto.setStyleSheet("background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; font-weight: bold; border-radius: 6px; padding: 4px 12px;")
         if mode == AutonomousNavigator.MODE_AUTONOMOUS:
-            self.btn_mode_auto.setChecked(True)
-            self.btn_mode_manual.setChecked(False)
-            self.btn_mode_auto.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
-            self.btn_mode_manual.setStyleSheet("")
             self.lbl_nav_state_badge.setText("● AUTONOMOUS MODE")
             self.lbl_nav_state_badge.setStyleSheet(
                 "background-color: #142E35; color: #00E5FF; border: 1px solid #00E5FF; "
                 "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
             )
         else:
-            self.btn_mode_manual.setChecked(True)
-            self.btn_mode_auto.setChecked(False)
-            self.btn_mode_manual.setStyleSheet("background-color: #00E5FF; color: #000000; font-weight: bold; border-radius: 6px;")
-            self.btn_mode_auto.setStyleSheet("")
-            self.lbl_nav_state_badge.setText("● MANUAL GESTURE")
+            self.lbl_nav_state_badge.setText("● STANDBY")
             self.lbl_nav_state_badge.setStyleSheet(
                 "background-color: #141A24; color: #94A3B8; border: 1px solid #232D3F; "
                 "border-radius: 12px; padding: 4px 10px; font-size: 12px; font-weight: 800;"
             )
 
+    def _on_btn_home_clicked(self):
+        """Triggers Return-To-Home, cleanly parking if already at starting origin (0, 0)."""
+        rx, ry, _ = self.mapping_engine.get_robot_pose()
+        dist = math.hypot(rx, ry)
+        if dist <= 15.0:
+            self.lbl_nav_status_msg.setText("🏠 Robot is already at the starting origin (0, 0)!")
+            self._on_ws_log("NAV", "Return-to-Home clicked: robot is already at origin (0, 0).")
+        else:
+            self.autonomous_navigator.return_to_home()
+
     def _on_nav_state_changed(self, state):
+        if getattr(self, "_last_rendered_nav_state", None) == state:
+            return
+        self._last_rendered_nav_state = state
         badge_styles = {
             AutonomousNavigator.STATE_IDLE: ("● IDLE", "#141A24", "#94A3B8"),
             AutonomousNavigator.STATE_EXPLORING: ("● EXPLORING FORWARD", "#132D21", "#10B981"),
@@ -761,6 +781,9 @@ class MainWindow(QMainWindow):
         )
 
     def _on_nav_status_message(self, msg):
+        if getattr(self, "_last_rendered_status_msg", None) == msg:
+            return
+        self._last_rendered_status_msg = msg
         self.lbl_nav_status_msg.setText(msg)
 
     def _on_mapping_pose_updated(self, x, y, heading):
@@ -1452,10 +1475,22 @@ class MainWindow(QMainWindow):
                 detected, landmarks_list, confidence, min_confidence=min_conf
             )
 
-            # Trigger Return-To-Home when showing ✌️ Two Fingers Up (V-Sign)
+            # Latch & Cooldown for Return-To-Home ✌️ Gesture
+            now_ts = time.time()
             if candidate_gesture == config.CMD_RETURN_HOME and is_stable:
-                if self.autonomous_navigator.current_state != AutonomousNavigator.STATE_HOMING:
-                    self.autonomous_navigator.return_to_home()
+                if not self._homing_trigger_latched and (now_ts - self._last_homing_trigger_time) >= self._homing_cooldown:
+                    self._homing_trigger_latched = True
+                    self._last_homing_trigger_time = now_ts
+                    rx, ry, _ = self.mapping_engine.get_robot_pose()
+                    dist_to_home = math.hypot(rx, ry)
+                    if dist_to_home <= 15.0:
+                        self.lbl_nav_status_msg.setText("🏠 Robot is already at the starting origin (0, 0)!")
+                        self._on_ws_log("NAV", "✌️ Return-to-Home sign shown: robot is already at origin (0, 0).")
+                    else:
+                        self.autonomous_navigator.return_to_home()
+            elif candidate_gesture != config.CMD_RETURN_HOME:
+                # User lowered or changed gesture: release latch for future presentation
+                self._homing_trigger_latched = False
 
             # 5. Evaluate Safety & Dispatch Command via WebSocket
             if self.autonomous_navigator.current_mode == AutonomousNavigator.MODE_AUTONOMOUS:
@@ -1494,69 +1529,90 @@ class MainWindow(QMainWindow):
             scaled_pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.video_label.setPixmap(scaled_pixmap)
 
-            self.lbl_res_badge.setText(f"{w}x{h} • {fps:.1f} FPS")
+            # Smooth badge update (throttled to 250ms to prevent relayout jitter)
+            if (now_ts - getattr(self, "_last_res_badge_time", 0.0)) >= 0.25:
+                self._last_res_badge_time = now_ts
+                self.lbl_res_badge.setText(f"{w}x{h} • {fps:.1f} FPS")
         else:
             active_car_cmd, safety_ok, fault_reason = self.car_controller.update(
                 config.CMD_STOP, True, False, False, 0.0, min_conf
             )
 
-        # 8. Update Telemetry UI Displays & Controls
-        g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
-        self.lbl_gesture_val.setText(f"{g_meta[1]} {g_meta[0]}")
-        self.lbl_gesture_val.setStyleSheet(f"color: {g_meta[2]};")
+        # 8. Update Telemetry UI Displays & Controls (Cached dirty-checking)
+        now_ts = time.time()
+        if candidate_gesture != self._last_rendered_gesture:
+            self._last_rendered_gesture = candidate_gesture
+            g_meta = config.GESTURE_METADATA.get(candidate_gesture, config.GESTURE_METADATA["NONE"])
+            self.lbl_gesture_val.setText(f"{g_meta[1]} {g_meta[0]}")
+            self.lbl_gesture_val.setStyleSheet(f"color: {g_meta[2]};")
 
         conf_pct = int(confidence * 100.0) if detected else 0
         self.bar_conf.setValue(conf_pct)
 
         # Update dedicated ✌️ gesture live detection status
-        if candidate_gesture == config.CMD_RETURN_HOME and detected:
-            self.bar_gesture_live_conf.setValue(conf_pct)
-            self.lbl_gesture_detect_state.setText("✌️ V-SIGN DETECTED (Calling Home)")
-            self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 800; color: #00E5FF;")
-        else:
-            self.bar_gesture_live_conf.setValue(0)
-            self.lbl_gesture_detect_state.setText("👀 Awaiting ✌️ gesture in camera view...")
-            self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
-
-        c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
-        self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
-        self.lbl_command_val.setStyleSheet(f"color: {c_meta[2]};")
-
-        self.lbl_safety_status.setText(fault_reason)
-        if safety_ok and active_car_cmd != config.CMD_STOP:
-            self.lbl_safety_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #10B981;")
-        else:
-            self.lbl_safety_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #F59E0B;")
-
-        self.lbl_fps_val.setText(f"{fps:.1f} FPS")
-        self.bar_fps.setValue(min(60, int(fps)))
-
-        # Highlight Active Direction Button in Grid Matrix
-        for cmd_key, btn in self.dir_buttons.items():
-            if cmd_key == active_car_cmd:
-                meta = config.GESTURE_METADATA.get(cmd_key, ("STOP", "●", "#00E5FF"))
-                btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none; border-radius: 6px;")
+        is_homing_detected = (candidate_gesture == config.CMD_RETURN_HOME and detected)
+        if is_homing_detected != self._last_homing_detected_state:
+            self._last_homing_detected_state = is_homing_detected
+            if is_homing_detected:
+                self.lbl_gesture_detect_state.setText("✌️ V-SIGN DETECTED (Calling Home)")
+                self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 800; color: #00E5FF;")
             else:
-                btn.setStyleSheet("")
+                self.lbl_gesture_detect_state.setText("👀 Awaiting ✌️ gesture in camera view...")
+                self.lbl_gesture_detect_state.setStyleSheet("font-size: 11px; font-weight: 700; color: #64748B;")
 
-        # Highlight Active Gesture Sign Card in Guide
-        for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
-            is_active = (
-                cmd_key == active_car_cmd
-                or (cmd_key == config.CMD_RETURN_HOME and (
-                    candidate_gesture == config.CMD_RETURN_HOME
-                    or self.autonomous_navigator.current_state == AutonomousNavigator.STATE_HOMING
-                ))
-            )
-            if is_active:
-                color = card.property("accent_color") or "#00E5FF"
-                card.setStyleSheet(
-                    f"background-color: #1E293B; border: 2px solid {color}; border-radius: 8px; padding: 8px 10px;"
-                )
+        self.bar_gesture_live_conf.setValue(conf_pct if is_homing_detected else 0)
+
+        if active_car_cmd != self._last_rendered_cmd:
+            self._last_rendered_cmd = active_car_cmd
+            c_meta = config.GESTURE_METADATA.get(active_car_cmd, config.GESTURE_METADATA[config.CMD_STOP])
+            self.lbl_command_val.setText(f"{c_meta[1]} {c_meta[0]} [{active_car_cmd}]")
+            self.lbl_command_val.setStyleSheet(f"color: {c_meta[2]};")
+
+            # Highlight Active Direction Button in Grid Matrix only when command changes
+            for cmd_key, btn in self.dir_buttons.items():
+                if cmd_key == active_car_cmd:
+                    meta = config.GESTURE_METADATA.get(cmd_key, ("STOP", "●", "#00E5FF"))
+                    btn.setStyleSheet(f"background-color: {meta[2]}; color: #FFFFFF; font-weight: bold; border: none; border-radius: 6px;")
+                else:
+                    btn.setStyleSheet("")
+
+        safety_key = (safety_ok, active_car_cmd, fault_reason)
+        if safety_key != self._last_rendered_safety:
+            self._last_rendered_safety = safety_key
+            self.lbl_safety_status.setText(fault_reason)
+            if safety_ok and active_car_cmd != config.CMD_STOP:
+                self.lbl_safety_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #10B981;")
             else:
-                card.setStyleSheet(
-                    "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
+                self.lbl_safety_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #F59E0B;")
+
+        # Throttle FPS text & bar update to ~250ms
+        if (now_ts - getattr(self, "_last_fps_update_time", 0.0)) >= 0.25:
+            self._last_fps_update_time = now_ts
+            self.lbl_fps_val.setText(f"{fps:.1f} FPS")
+            self.bar_fps.setValue(min(60, int(fps)))
+
+        # Highlight Active Gesture Sign Card in Guide only when active card state changes
+        is_homing_active = (
+            candidate_gesture == config.CMD_RETURN_HOME
+            or self.autonomous_navigator.current_state == AutonomousNavigator.STATE_HOMING
+        )
+        active_card_key = (active_car_cmd, is_homing_active)
+        if active_card_key != self._last_rendered_active_card_key:
+            self._last_rendered_active_card_key = active_card_key
+            for cmd_key, card in getattr(self, "gesture_guide_cards", {}).items():
+                is_active = (
+                    cmd_key == active_car_cmd
+                    or (cmd_key == config.CMD_RETURN_HOME and is_homing_active)
                 )
+                if is_active:
+                    color = card.property("accent_color") or "#00E5FF"
+                    card.setStyleSheet(
+                        f"background-color: #1E293B; border: 2px solid {color}; border-radius: 8px; padding: 8px 10px;"
+                    )
+                else:
+                    card.setStyleSheet(
+                        "background-color: #111827; border: 1px solid #1E293B; border-radius: 8px; padding: 8px 10px;"
+                    )
 
     @Slot(dict)
     def _on_ws_radar_telemetry(self, data):

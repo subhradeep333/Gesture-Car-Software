@@ -176,7 +176,7 @@ class GestureClassifier:
         # Fast Return-to-Home activation (2 consecutive frames)
         if candidate == config.CMD_RETURN_HOME:
             self.frame_buffer.append(candidate)
-            if self.frame_buffer.count(config.CMD_RETURN_HOME) >= 2:
+            if len(self.frame_buffer) >= 2:
                 self.current_stable_command = config.CMD_RETURN_HOME
                 return candidate, config.CMD_RETURN_HOME, True
             return candidate, config.CMD_STOP, False
