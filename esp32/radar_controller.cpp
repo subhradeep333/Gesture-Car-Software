@@ -4,22 +4,22 @@
 #include <esp_arduino_version.h>
 
 #if defined(__has_include)
+  #if __has_include(<Adafruit_VL53L0X.h>)
+    #include <Adafruit_VL53L0X.h>
+    #define HAS_VL53L0X_LIB 1
+  #else
+    #define HAS_VL53L0X_LIB 0
+  #endif
   #if __has_include(<Adafruit_VL53L1X.h>)
     #include <Adafruit_VL53L1X.h>
     #define HAS_VL53L1X_LIB 1
-    #define HAS_VL53L0X_LIB 0
-  #elif __has_include(<Adafruit_VL53L0X.h>)
-    #include <Adafruit_VL53L0X.h>
-    #define HAS_VL53L1X_LIB 0
-    #define HAS_VL53L0X_LIB 1
   #else
     #define HAS_VL53L1X_LIB 0
-    #define HAS_VL53L0X_LIB 0
   #endif
 #else
-  #include <Adafruit_VL53L1X.h>
-  #define HAS_VL53L1X_LIB 1
-  #define HAS_VL53L0X_LIB 0
+  #include <Adafruit_VL53L0X.h>
+  #define HAS_VL53L0X_LIB 1
+  #define HAS_VL53L1X_LIB 0
 #endif
 
 static int current_angle = 90;
@@ -28,12 +28,14 @@ static unsigned long last_servo_update = 0;
 static unsigned long last_serial_log = 0;
 static bool is_scanning_look_around = false;
 
-#if HAS_VL53L1X_LIB
-static Adafruit_VL53L1X vl53 = Adafruit_VL53L1X();
-#elif HAS_VL53L0X_LIB
+#if HAS_VL53L0X_LIB
 static Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 #endif
+#if HAS_VL53L1X_LIB
+static Adafruit_VL53L1X vl53 = Adafruit_VL53L1X();
+#endif
 static bool tof_initialized = false;
+static bool tof_is_l0x = true;  // true = VL53L0X, false = VL53L1X
 
 static float current_dist = 200.0f;
 static float left_dist = 200.0f;
@@ -74,39 +76,35 @@ void initRadar() {
     // Initialize I2C Bus on GPIO 21 & 22
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
 
-#if HAS_VL53L1X_LIB
-    // Try booting the VL53L1X Laser Time-of-Flight Sensor
-    if (vl53.begin(0x29, &Wire)) {
-        vl53.startRanging();
-        vl53.setTimingBudget(50);
-        tof_initialized = true;
-        Serial.println("[RADAR] ✅ VL53L1X Laser Time-of-Flight Sensor initialized!");
-    } else {
-        Serial.printf("[RADAR] ⚠️ VL53L1X not detected on I2C (status %d).\n", vl53.vl_status);
-        Serial.println("[RADAR] 💡 Initializing Ultrasonic GPIO fallback pins (TRIG=5, ECHO=19)...");
-        pinMode(TRIG_PIN, OUTPUT);
-        pinMode(ECHO_PIN, INPUT);
-        digitalWrite(TRIG_PIN, LOW);
-    }
-#elif HAS_VL53L0X_LIB
-    // Try booting the VL53L0X Laser Time-of-Flight Sensor
+#if HAS_VL53L0X_LIB
+    // 1. Try booting the VL53L0X Laser Time-of-Flight Sensor (e.g. CJVL53L0X V2)
     if (lox.begin()) {
         tof_initialized = true;
-        Serial.println("[RADAR] ✅ VL53L0X Laser Time-of-Flight Sensor initialized!");
-    } else {
-        Serial.println("[RADAR] ⚠️ VL53L0X not detected on I2C (check SDA=21, SCL=22, VCC=3.3V/5V, GND).");
+        tof_is_l0x = true;
+        Serial.println("[RADAR] ✅ CJVL53L0X (VL53L0X) Laser Time-of-Flight Sensor initialized!");
+    }
+#endif
+
+#if HAS_VL53L1X_LIB
+    // 2. If VL53L0X didn't boot, try VL53L1X
+    if (!tof_initialized) {
+        if (vl53.begin(0x29, &Wire)) {
+            vl53.startRanging();
+            vl53.setTimingBudget(50);
+            tof_initialized = true;
+            tof_is_l0x = false;
+            Serial.println("[RADAR] ✅ VL53L1X Laser Time-of-Flight Sensor initialized!");
+        }
+    }
+#endif
+
+    if (!tof_initialized) {
+        Serial.println("[RADAR] ⚠️ Laser ToF not detected on I2C (check SDA=21, SCL=22, VCC=3.3V/5V, GND).");
         Serial.println("[RADAR] 💡 Initializing Ultrasonic GPIO fallback pins (TRIG=5, ECHO=19)...");
         pinMode(TRIG_PIN, OUTPUT);
         pinMode(ECHO_PIN, INPUT);
         digitalWrite(TRIG_PIN, LOW);
     }
-#else
-    Serial.println("[RADAR] ⚠️ Neither 'Adafruit_VL53L1X' nor 'Adafruit_VL53L0X' library installed in Arduino IDE.");
-    Serial.println("[RADAR] 💡 In Arduino IDE, open Tools > Manage Libraries and install 'Adafruit VL53L1X'.");
-    pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
-    digitalWrite(TRIG_PIN, LOW);
-#endif
 
 #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
     // ESP32 Arduino Core 3.x Servo PWM setup (50Hz, 16-bit)
@@ -174,24 +172,9 @@ static float readSingleDistanceDirect() {
 }
 
 float readDistance() {
-#if HAS_VL53L1X_LIB
-    // 1. Preferred: High-speed, high-precision VL53L1X Laser Time-of-Flight
-    if (tof_initialized) {
-        if (vl53.dataReady()) {
-            int16_t mm = vl53.distance();
-            vl53.clearInterrupt();
-            if (mm > 0) {
-                float cm = (float)mm / 10.0f;
-                if (cm >= 2.0f && cm <= SENSOR_MAX_RANGE_CM) {
-                    return cm;
-                }
-            }
-        }
-        return SENSOR_MAX_RANGE_CM;
-    }
-#elif HAS_VL53L0X_LIB
-    // 1. Preferred: High-speed, high-precision VL53L0X Laser Time-of-Flight
-    if (tof_initialized) {
+#if HAS_VL53L0X_LIB
+    // 1. High-speed, high-precision VL53L0X Laser Time-of-Flight (e.g. CJVL53L0X V2)
+    if (tof_initialized && tof_is_l0x) {
         VL53L0X_RangingMeasurementData_t measure;
         lox.rangingTest(&measure, false);
 
@@ -200,6 +183,23 @@ float readDistance() {
             float cm = (float)measure.RangeMilliMeter / 10.0f;
             if (cm >= 2.0f && cm <= SENSOR_MAX_RANGE_CM) {
                 return cm;
+            }
+        }
+        return SENSOR_MAX_RANGE_CM;
+    }
+#endif
+
+#if HAS_VL53L1X_LIB
+    // 2. High-speed, high-precision VL53L1X Laser Time-of-Flight
+    if (tof_initialized && !tof_is_l0x) {
+        if (vl53.dataReady()) {
+            int16_t mm = vl53.distance();
+            vl53.clearInterrupt();
+            if (mm > 0) {
+                float cm = (float)mm / 10.0f;
+                if (cm >= 2.0f && cm <= SENSOR_MAX_RANGE_CM) {
+                    return cm;
+                }
             }
         }
         return SENSOR_MAX_RANGE_CM;
